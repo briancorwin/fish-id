@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Model weights (local only — baked into container at build time)
+*.onnx
+*.pt
