@@ -11,7 +11,7 @@ Full architecture decisions and GCP service mapping are documented in:
 **[docs/architecture-context.md](docs/architecture-context.md)**
 
 Key points:
-- `app/` — Flask API on Cloud Run; ONNX inference runs directly on CPU
+- `app/` — Flask API on Cloud Run; ONNX inference runs directly on CPU, returns bounding box coordinates (not an annotated image)
 - `frontend/` — Static site on Firebase Hosting
 
 ## Stack

@@ -34,22 +34,16 @@ gcloud iam service-accounts create fish-id-sa \
   --display-name="fish-id Cloud Run SA"
 ```
 
-### 3. Place your model file
-
-Copy `best.onnx` into `app/` before building. It is not committed to the repo.
-
-```bash
-cp /path/to/best.onnx app/best.onnx
-```
-
 ---
 
 ## Deploy
 
 ### API (Cloud Run)
 
+`scripts/build.sh` takes the path to your `best.onnx` and your GCP project ID, copies the model into `app/` for the build, then removes it.
+
 ```bash
-gcloud builds submit app/ --tag gcr.io/YOUR_PROJECT/fish-id
+scripts/build.sh /path/to/best.onnx YOUR_PROJECT
 
 gcloud run deploy fish-id \
   --image gcr.io/YOUR_PROJECT/fish-id \
@@ -74,8 +68,37 @@ firebase deploy --only hosting
 
 ## Local Development
 
+### First-time setup
+
 ```bash
-cd app/
-pip install -r requirements.txt
-flask run --port 8080
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r app/requirements.txt -r tests/requirements.txt
+```
+
+### Running the API
+
+Place `best.onnx` in `app/` before starting — the app loads it at startup and will crash without it.
+
+```bash
+source .venv/bin/activate
+python3 app/main.py
+```
+
+The API is available at `http://localhost:8080`.
+
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Run detection on an image
+curl -X POST http://localhost:8080/detect \
+  -F "image=@/path/to/fish.jpg;type=image/jpeg"
+```
+
+### Running tests
+
+```bash
+source .venv/bin/activate
+python3 -m pytest tests/ -v
 ```
