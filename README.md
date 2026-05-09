@@ -96,6 +96,14 @@ curl -X POST http://localhost:8080/detect \
   -F "image=@/path/to/fish.jpg;type=image/jpeg"
 ```
 
+### Running the frontend
+
+```bash
+python3 -m http.server 3000 --directory frontend/public/
+```
+
+Open `http://localhost:3000`. The API defaults `CORS_ORIGIN` to `*` when the env var is unset, so requests to the local API at `http://localhost:8080` work without changes.
+
 ### Running tests
 
 ```bash
