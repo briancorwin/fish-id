@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 # Mock ultralytics.YOLO before main.py is imported — the model is loaded at
 # module level so the patch must be in place at import time.
 _mock_model = MagicMock()
+_mock_model.names = {0: "Largemouth Bass", 1: "Bluegill", 2: "Crappie", 3: "Catfish"}
 
 with patch("ultralytics.YOLO", return_value=_mock_model):
     import main

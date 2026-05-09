@@ -50,6 +50,7 @@ class TestPostprocess:
         detections = main._postprocess(result)
         assert len(detections) == 1
         assert detections[0]["class_id"] == 0
+        assert detections[0]["class_name"] == "Largemouth Bass"
         assert detections[0]["confidence"] == pytest.approx(0.9, abs=1e-3)
         assert detections[0]["box"] == {"x1": 270, "y1": 270, "x2": 370, "y2": 370}
 
@@ -66,6 +67,7 @@ class TestPostprocess:
         ])
         detections = main._postprocess(result)
         assert detections[0]["class_id"] == 2
+        assert detections[0]["class_name"] == "Crappie"
 
     def test_confidence_rounded_to_4_decimal_places(self):
         result = make_yolo_result([
@@ -78,7 +80,7 @@ class TestPostprocess:
             {"x1": 0, "y1": 0, "x2": 100, "y2": 100, "conf": 0.9},
         ])
         det = main._postprocess(result)[0]
-        assert set(det.keys()) == {"class_id", "confidence", "box"}
+        assert set(det.keys()) == {"class_id", "class_name", "confidence", "box"}
         assert set(det["box"].keys()) == {"x1", "y1", "x2", "y2"}
 
 
@@ -139,6 +141,7 @@ class TestDetectEndpoint:
         assert len(data["detections"]) == 2
         for det in data["detections"]:
             assert "class_id" in det
+            assert "class_name" in det
             assert "confidence" in det
             assert {"x1", "y1", "x2", "y2"} == set(det["box"].keys())
 

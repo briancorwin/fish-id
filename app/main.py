@@ -36,6 +36,14 @@ def _is_valid_image(data: bytes) -> bool:
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
 _model = YOLO(_MODEL_PATH)
 
+# Used only if the model was exported without class name metadata
+_FALLBACK_NAMES: dict[int, str] = {
+    # 0: "Largemouth Bass",
+    # 1: "Bluegill",
+}
+
+_class_names: dict = _model.names or _FALLBACK_NAMES
+
 
 def _postprocess(result) -> list:
     boxes = result.boxes
@@ -44,6 +52,7 @@ def _postprocess(result) -> list:
     return [
         {
             "class_id": int(cls),
+            "class_name": _class_names.get(int(cls), f"Class {int(cls)}"),
             "confidence": round(float(conf), 4),
             "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
         }
