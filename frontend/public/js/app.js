@@ -3,9 +3,6 @@ const API_BASE = (window.location.hostname === 'localhost' || window.location.ho
   ? 'http://localhost:8080'
   : 'https://YOUR_CLOUD_RUN_URL';
 
-// Replace with the actual class names from your trained model
-const CLASS_NAMES = ['Class 0', 'Class 1', 'Class 2', 'Class 3'];
-
 const BOX_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899'];
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -126,7 +123,7 @@ function drawResults(detections) {
   detections.forEach(det => {
     const color = BOX_COLORS[det.class_id % BOX_COLORS.length];
     const { x1, y1, x2, y2 } = det.box;
-    const label = `${className(det.class_id)} ${Math.round(det.confidence * 100)}%`;
+    const label = `${det.class_name} ${Math.round(det.confidence * 100)}%`;
 
     // Bounding box
     ctx.strokeStyle = color;
@@ -155,7 +152,7 @@ function showResults(count, elapsed, detections) {
     const color = BOX_COLORS[det.class_id % BOX_COLORS.length];
     return `<li>
       <span class="swatch" style="background:${color}"></span>
-      ${className(det.class_id)} — ${Math.round(det.confidence * 100)}%
+      ${det.class_name} — ${Math.round(det.confidence * 100)}%
     </li>`;
   }).join('');
 
@@ -163,10 +160,6 @@ function showResults(count, elapsed, detections) {
 }
 
 // --- Helpers ---
-
-function className(id) {
-  return CLASS_NAMES[id] ?? `Class ${id}`;
-}
 
 function showStatus(msg) {
   statusEl.textContent = msg;

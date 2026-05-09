@@ -68,6 +68,8 @@ firebase deploy --only hosting
 
 ## Local Development
 
+All commands below are run from the repo root.
+
 ### First-time setup
 
 ```bash
