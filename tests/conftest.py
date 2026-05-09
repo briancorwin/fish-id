@@ -7,37 +7,30 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
-# Mock onnxruntime.InferenceSession before main.py is imported — the session
-# is created at module level so the patch must be in place at import time.
-_mock_session = MagicMock()
-_mock_input = MagicMock()
-_mock_input.name = "images"
-_mock_input.shape = [1, 3, 640, 640]
-_mock_session.get_inputs.return_value = [_mock_input]
+# Mock ultralytics.YOLO before main.py is imported — the model is loaded at
+# module level so the patch must be in place at import time.
+_mock_model = MagicMock()
 
-with patch("onnxruntime.InferenceSession", return_value=_mock_session):
+with patch("ultralytics.YOLO", return_value=_mock_model):
     import main
 
 
-NUM_CLASSES = 4  # matches the real model's 4-class output
+def make_yolo_result(detections: list[dict]):
+    """Build a fake Ultralytics Results object.
 
-
-def make_onnx_output(detections: list[dict]) -> np.ndarray:
-    """Build a fake YOLOv8 ONNX output tensor [1, 4+nc, num_anchors].
-
-    Each detection dict: {cx, cy, w, h, conf, class_id (optional, default 0)}
-    in INPUT_SIZE pixel space.
+    Each detection dict: {x1, y1, x2, y2, conf, class_id (optional, default 0)}
+    in original image pixel space.
     """
-    num_anchors = 5376  # 64²+32²+16² for imgsz=512 (mocked as 640 in tests)
-    output = np.zeros((1, 4 + NUM_CLASSES, num_anchors), dtype=np.float32)
-    for i, d in enumerate(detections):
-        output[0, 0, i] = d["cx"]
-        output[0, 1, i] = d["cy"]
-        output[0, 2, i] = d["w"]
-        output[0, 3, i] = d["h"]
-        class_id = d.get("class_id", 0)
-        output[0, 4 + class_id, i] = d["conf"]
-    return output
+    result = MagicMock()
+    boxes = MagicMock()
+    boxes.__len__ = MagicMock(return_value=len(detections))
+    boxes.xyxy.tolist.return_value = [
+        [d["x1"], d["y1"], d["x2"], d["y2"]] for d in detections
+    ]
+    boxes.conf.tolist.return_value = [d["conf"] for d in detections]
+    boxes.cls.tolist.return_value = [float(d.get("class_id", 0)) for d in detections]
+    result.boxes = boxes
+    return result
 
 
 def make_jpeg(width: int = 100, height: int = 100) -> bytes:
@@ -56,8 +49,8 @@ def client():
 
 
 @pytest.fixture
-def mock_session():
-    return _mock_session
+def mock_model():
+    return _mock_model
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import cv2
-import onnxruntime as ort
+from ultralytics import YOLO
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -33,58 +33,23 @@ def _is_valid_image(data: bytes) -> bool:
     return False
 
 
-# Load model once at startup
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
-_session = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
-_input_name = _session.get_inputs()[0].name
-INPUT_SIZE = _session.get_inputs()[0].shape[2]
+_model = YOLO(_MODEL_PATH)
 
 
-def _preprocess(image: np.ndarray) -> np.ndarray:
-    img = cv2.resize(image, (INPUT_SIZE, INPUT_SIZE))
-    # OpenCV loads BGR; YOLOv8 expects RGB
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    return np.expand_dims(np.transpose(img, (2, 0, 1)), 0)
-
-
-def _postprocess(output: np.ndarray, orig_w: int, orig_h: int):
-    # YOLOv8 ONNX output: [4+nc, num_anchors] — transpose to [num_anchors, 4+nc]
-    preds = output[0].T
-    nc = preds.shape[1] - 4
-
-    class_scores = preds[:, 4:]                        # [num_anchors, nc]
-    conf = np.max(class_scores, axis=1)                # max score across classes
-    class_ids = np.argmax(class_scores, axis=1)        # winning class per anchor
-
-    mask = conf >= CONF_THRESHOLD
-    if not mask.any():
+def _postprocess(result) -> list:
+    boxes = result.boxes
+    if boxes is None or len(boxes) == 0:
         return []
-
-    preds, conf, class_ids = preds[mask], conf[mask], class_ids[mask]
-    cx, cy, w, h = preds[:, 0], preds[:, 1], preds[:, 2], preds[:, 3]
-
-    scale_x, scale_y = orig_w / INPUT_SIZE, orig_h / INPUT_SIZE
-    x1 = ((cx - w / 2) * scale_x).astype(int)
-    y1 = ((cy - h / 2) * scale_y).astype(int)
-    x2 = ((cx + w / 2) * scale_x).astype(int)
-    y2 = ((cy + h / 2) * scale_y).astype(int)
-
-    boxes = list(zip(x1.tolist(), y1.tolist(), x2.tolist(), y2.tolist()))
-    scores = conf.tolist()
-    classes = class_ids.tolist()
-
-    cv2_boxes = [[bx1, by1, bx2 - bx1, by2 - by1] for bx1, by1, bx2, by2 in boxes]
-    indices = cv2.dnn.NMSBoxes(cv2_boxes, scores, CONF_THRESHOLD, NMS_THRESHOLD)
-    if len(indices) == 0:
-        return []
-
     return [
         {
-            "class_id": classes[i],
-            "confidence": round(scores[i], 4),
-            "box": {"x1": boxes[i][0], "y1": boxes[i][1], "x2": boxes[i][2], "y2": boxes[i][3]},
+            "class_id": int(cls),
+            "confidence": round(float(conf), 4),
+            "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
         }
-        for i in indices.flatten()
+        for (x1, y1, x2, y2), conf, cls in zip(
+            boxes.xyxy.tolist(), boxes.conf.tolist(), boxes.cls.tolist()
+        )
     ]
 
 
@@ -113,9 +78,8 @@ def detect():
     if image is None:
         return jsonify({"error": "Could not decode image"}), 400
 
-    orig_h, orig_w = image.shape[:2]
-    outputs = _session.run(None, {_input_name: _preprocess(image)})
-    detections = _postprocess(outputs[0], orig_w, orig_h)
+    results = _model(image, conf=CONF_THRESHOLD, iou=NMS_THRESHOLD, verbose=False)
+    detections = _postprocess(results[0])
 
     return jsonify({
         "fish_count": len(detections),

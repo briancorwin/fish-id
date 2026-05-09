@@ -1,8 +1,7 @@
 import io
-import numpy as np
 import pytest
 import main
-from conftest import make_jpeg, make_onnx_output
+from conftest import make_jpeg, make_yolo_result
 
 
 # ---------------------------------------------------------------------------
@@ -42,70 +41,45 @@ class TestIsValidImage:
 # ---------------------------------------------------------------------------
 
 class TestPostprocess:
-    def test_no_detections_above_threshold(self):
-        from conftest import NUM_CLASSES
-        output = np.zeros((1, 4 + NUM_CLASSES, 5376), dtype=np.float32)
-        output[0, 4, 0] = 0.2  # below CONF_THRESHOLD of 0.25
-        result = main._postprocess(output, orig_w=640, orig_h=640)
-        assert result == []
+    def test_empty_result_returns_empty_list(self):
+        result = make_yolo_result([])
+        assert main._postprocess(result) == []
 
     def test_single_detection(self):
-        output = make_onnx_output([{"cx": 320, "cy": 320, "w": 100, "h": 100, "conf": 0.9}])
-        result = main._postprocess(output, orig_w=640, orig_h=640)
-        assert len(result) == 1
-        assert result[0]["class_id"] == 0
-        assert result[0]["confidence"] == pytest.approx(0.9, abs=1e-3)
-        box = result[0]["box"]
-        assert box["x1"] == 270
-        assert box["y1"] == 270
-        assert box["x2"] == 370
-        assert box["y2"] == 370
+        result = make_yolo_result([{"x1": 270, "y1": 270, "x2": 370, "y2": 370, "conf": 0.9}])
+        detections = main._postprocess(result)
+        assert len(detections) == 1
+        assert detections[0]["class_id"] == 0
+        assert detections[0]["confidence"] == pytest.approx(0.9, abs=1e-3)
+        assert detections[0]["box"] == {"x1": 270, "y1": 270, "x2": 370, "y2": 370}
 
-    def test_coordinates_scale_to_original_image_size(self):
-        # Detection centred at (320, 320) in 640x640 space
-        # Original image is 1280x1280 — coordinates should double
-        output = make_onnx_output([{"cx": 320, "cy": 320, "w": 100, "h": 100, "conf": 0.9}])
-        result = main._postprocess(output, orig_w=1280, orig_h=1280)
-        assert len(result) == 1
-        box = result[0]["box"]
-        assert box["x1"] == 540
-        assert box["y1"] == 540
-        assert box["x2"] == 740
-        assert box["y2"] == 740
-
-    def test_multiple_non_overlapping_detections_all_kept(self):
-        output = make_onnx_output([
-            {"cx": 100, "cy": 100, "w": 50, "h": 50, "conf": 0.9},
-            {"cx": 500, "cy": 500, "w": 50, "h": 50, "conf": 0.8},
+    def test_multiple_detections(self):
+        result = make_yolo_result([
+            {"x1": 75, "y1": 75, "x2": 125, "y2": 125, "conf": 0.9},
+            {"x1": 475, "y1": 475, "x2": 530, "y2": 530, "conf": 0.8},
         ])
-        result = main._postprocess(output, orig_w=640, orig_h=640)
-        assert len(result) == 2
-
-    def test_overlapping_detections_nms_keeps_highest_confidence(self):
-        # Two nearly identical boxes — NMS should suppress the lower-confidence one
-        output = make_onnx_output([
-            {"cx": 320, "cy": 320, "w": 100, "h": 100, "conf": 0.9},
-            {"cx": 322, "cy": 322, "w": 100, "h": 100, "conf": 0.6},
-        ])
-        result = main._postprocess(output, orig_w=640, orig_h=640)
-        assert len(result) == 1
-        assert result[0]["confidence"] == pytest.approx(0.9, abs=1e-3)
+        assert len(main._postprocess(result)) == 2
 
     def test_multi_class_correct_class_id_returned(self):
-        output = make_onnx_output([
-            {"cx": 100, "cy": 100, "w": 50, "h": 50, "conf": 0.9, "class_id": 2},
+        result = make_yolo_result([
+            {"x1": 75, "y1": 75, "x2": 125, "y2": 125, "conf": 0.9, "class_id": 2},
         ])
-        result = main._postprocess(output, orig_w=640, orig_h=640)
-        assert len(result) == 1
-        assert result[0]["class_id"] == 2
+        detections = main._postprocess(result)
+        assert detections[0]["class_id"] == 2
 
-    def test_detection_below_threshold_excluded(self):
-        output = make_onnx_output([
-            {"cx": 320, "cy": 320, "w": 100, "h": 100, "conf": 0.9},
-            {"cx": 100, "cy": 100, "w": 50,  "h": 50,  "conf": 0.2},  # below threshold
+    def test_confidence_rounded_to_4_decimal_places(self):
+        result = make_yolo_result([
+            {"x1": 0, "y1": 0, "x2": 100, "y2": 100, "conf": 0.123456},
         ])
-        result = main._postprocess(output, orig_w=640, orig_h=640)
-        assert len(result) == 1
+        assert main._postprocess(result)[0]["confidence"] == 0.1235
+
+    def test_output_keys(self):
+        result = make_yolo_result([
+            {"x1": 0, "y1": 0, "x2": 100, "y2": 100, "conf": 0.9},
+        ])
+        det = main._postprocess(result)[0]
+        assert set(det.keys()) == {"class_id", "confidence", "box"}
+        assert set(det["box"].keys()) == {"x1", "y1", "x2", "y2"}
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +115,8 @@ class TestDetectEndpoint:
         assert resp.status_code == 400
         assert "Invalid image format" in resp.get_json()["error"]
 
-    def test_no_detections_returns_empty_list(self, client, mock_session):
-        mock_session.run.return_value = [make_onnx_output([])]
+    def test_no_detections_returns_empty_list(self, client, mock_model):
+        mock_model.return_value = [make_yolo_result([])]
         resp = client.post("/detect",
                            data={"image": (io.BytesIO(make_jpeg()), "fish.jpg")},
                            content_type="multipart/form-data")
@@ -151,10 +125,10 @@ class TestDetectEndpoint:
         assert data["fish_count"] == 0
         assert data["detections"] == []
 
-    def test_detections_returned_correctly(self, client, mock_session):
-        mock_session.run.return_value = [make_onnx_output([
-            {"cx": 100, "cy": 100, "w": 50, "h": 50, "conf": 0.9},
-            {"cx": 400, "cy": 400, "w": 60, "h": 60, "conf": 0.75},
+    def test_detections_returned_correctly(self, client, mock_model):
+        mock_model.return_value = [make_yolo_result([
+            {"x1": 75,  "y1": 75,  "x2": 125, "y2": 125, "conf": 0.9},
+            {"x1": 370, "y1": 370, "x2": 430, "y2": 430, "conf": 0.75},
         ])]
         resp = client.post("/detect",
                            data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
@@ -168,9 +142,9 @@ class TestDetectEndpoint:
             assert "confidence" in det
             assert {"x1", "y1", "x2", "y2"} == set(det["box"].keys())
 
-    def test_response_shape(self, client, mock_session):
-        mock_session.run.return_value = [make_onnx_output([
-            {"cx": 320, "cy": 320, "w": 100, "h": 100, "conf": 0.85},
+    def test_response_shape(self, client, mock_model):
+        mock_model.return_value = [make_yolo_result([
+            {"x1": 270, "y1": 270, "x2": 370, "y2": 370, "conf": 0.85},
         ])]
         resp = client.post("/detect",
                            data={"image": (io.BytesIO(make_jpeg()), "fish.jpg")},
