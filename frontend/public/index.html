@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fish Detector</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Fish Detector</h1>
+      <p>Upload a photo to detect and identify fish</p>
+    </header>
+
+    <div class="upload-zone" id="dropZone">
+      <input type="file" id="fileInput" accept="image/*" hidden>
+      <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <p>Drop an image here or <span class="browse-link">browse</span></p>
+      <p class="upload-hint">JPEG, PNG, WEBP up to 5MB</p>
+    </div>
+
+    <p class="status" id="status" hidden></p>
+
+    <div class="canvas-container" id="canvasContainer" hidden>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div class="controls">
+      <button id="detectBtn" disabled>Detect Fish</button>
+    </div>
+
+    <div class="results" id="results" hidden>
+      <div class="result-summary">
+        <span class="fish-count" id="fishCount">0</span>
+        <span class="fish-label">fish detected</span>
+        <span class="inference-time">(<span id="inferenceTime">-</span> ms)</span>
+      </div>
+      <ul class="detection-list" id="detectionList"></ul>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

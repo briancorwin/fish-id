@@ -28,6 +28,8 @@ fish-id/
 │   │   └── js/app.js
 │   ├── firebase.json
 │   └── .firebaserc
+├── scripts/
+│   └── build.sh                # copies best.onnx into app/, builds container, cleans up
 ├── tests/
 ├── .env.example
 └── README.md
@@ -55,8 +57,10 @@ Accepts image uploads, runs ONNX inference, returns annotated image + fish count
 Served by gunicorn (not the Flask dev server).
 
 Endpoints:
-- `POST /detect` — accepts multipart image, returns `{ image_b64, fish_count }`
+- `POST /detect` — accepts multipart image, returns `{ fish_count, detections: [{ class_id, confidence, box: { x1, y1, x2, y2 } }] }`
 - `GET /health` — health check
+
+The frontend is responsible for drawing bounding boxes on the image using canvas.
 
 Image validation on upload:
 - 5MB size limit
@@ -76,7 +80,8 @@ Image validation on upload:
 ### Frontend
 
 Static site on Firebase Hosting; talks to Cloud Run API.
-Shows original and annotated images side-by-side, fish count, and inference time.
+Draws bounding boxes on the image via canvas using the box coordinates returned by `/detect`.
+Shows fish count and inference time.
 
 CORS on Cloud Run restricted to the Firebase Hosting origin.
 
