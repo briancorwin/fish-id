@@ -1,6 +1,6 @@
 # fish-id
 
-Simple web app to identify fresh water fish species (e.g., Largemouth Bass) in pictures.
+Simple web app to identify fresh water fish species (e.g., Largemouth Bass) in images.
 
 Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
