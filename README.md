@@ -89,7 +89,11 @@ Then deploy:
 
 ```bash
 cd frontend/
-# Update API_BASE in public/js/app.js with your Cloud Run URL
+
+# Set projects.default in .firebaserc to ${PROJECT_ID}
+# Add "site": "${PROJECT_ID}" under "hosting" in firebase.json
+# In public/js/app.js, replace YOUR_CLOUD_RUN_URL in API_BASE with your Cloud Run URL
+
 firebase deploy --only hosting
 ```
 
