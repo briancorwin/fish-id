@@ -31,7 +31,7 @@ gcloud services enable \
 Allow your user account to submit builds:
 
 ```bash
-gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
   --member="user:${GCLOUD_USER}" \
   --role="roles/cloudbuild.builds.editor"
 ```
@@ -54,26 +54,26 @@ gcloud iam service-accounts create fish-id-sa \
 `scripts/build.sh` takes the path to your `best.onnx` and your GCP project ID, copies the model into `app/` for the build, then removes it.
 
 ```bash
-scripts/build.sh /path/to/best.onnx ${PROJECT_ID}
+scripts/build.sh /path/to/best.onnx YOUR_PROJECT_ID
 ```
 
 This runs the following Cloud Build step under the hood:
 
 ```bash
-gcloud builds submit app/ --tag gcr.io/${PROJECT_ID}/fish-id
+gcloud builds submit app/ --tag gcr.io/YOUR_PROJECT_ID/fish-id
 ```
 
 Then deploy to Cloud Run:
 
 ```bash
 gcloud run deploy fish-id \
-  --image gcr.io/${PROJECT_ID}/fish-id \
+  --image gcr.io/YOUR_PROJECT_ID/fish-id \
   --region us-central1 \
   --memory 2Gi \
   --cpu 2 \
   --concurrency 5 \
   --max-instances 1 \
-  --service-account fish-id-sa@${PROJECT_ID}.iam.gserviceaccount.com \
+  --service-account fish-id-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com \
   --allow-unauthenticated
 ```
 
@@ -82,7 +82,7 @@ gcloud run deploy fish-id \
 Create the Firebase Hosting site (one-time):
 
 ```bash
-firebase hosting:sites:create ${PROJECT_ID}
+firebase hosting:sites:create YOUR_SITE_NAME
 ```
 
 Then deploy:
@@ -90,8 +90,8 @@ Then deploy:
 ```bash
 cd frontend/
 
-# Set projects.default in .firebaserc to ${PROJECT_ID}
-# Add "site": "${PROJECT_ID}" under "hosting" in firebase.json
+# Set projects.default in .firebaserc to YOUR_PROJECT_ID
+# Add "site": "YOUR_SITE_NAME" under "hosting" in firebase.json
 # In public/js/app.js, replace YOUR_CLOUD_RUN_URL in API_BASE with your Cloud Run URL
 
 firebase deploy --only hosting
