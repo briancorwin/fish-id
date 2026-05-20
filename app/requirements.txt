@@ -3,6 +3,5 @@ flask-cors==4.0.1
 gunicorn==22.0.0
 ultralytics==8.4.51
 opencv-python-headless==4.10.0.84
-#numpy==1.26.4
 onnx==1.21.0
 onnxruntime==1.26.0
