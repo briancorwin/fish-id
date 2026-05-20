@@ -15,7 +15,7 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 ---
 
-## Setup
+## Initial Setup
 
 ### 1. Enable required APIs
 
@@ -26,17 +26,7 @@ gcloud services enable \
   cloudbuild.googleapis.com
 ```
 
-### 2. Grant Cloud Build permissions
-
-Allow your user account to submit builds:
-
-```bash
-gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-  --member="user:GCLOUD_USER" \
-  --role="roles/cloudbuild.builds.editor"
-```
-
-### 3. Create a service account for Cloud Run
+### 2. Create a service account for Cloud Run
 
 The service account is granted no roles — the app makes no GCP API calls.
 
@@ -47,9 +37,17 @@ gcloud iam service-accounts create fish-id-sa \
 
 ---
 
-## Deploy
+## Deployment via CLI
 
 ### API (Cloud Run)
+
+Grant your user account permission to submit builds:
+
+```bash
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="user:GCLOUD_USER" \
+  --role="roles/cloudbuild.builds.editor"
+```
 
 `scripts/build.sh` takes the path to your `best.onnx` and your GCP project ID, copies the model into `app/` for the build, then removes it.
 
