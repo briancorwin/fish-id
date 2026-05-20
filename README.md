@@ -32,7 +32,7 @@ Allow your user account to submit builds:
 
 ```bash
 gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-  --member="user:${GCLOUD_USER}" \
+  --member="user:GCLOUD_USER" \
   --role="roles/cloudbuild.builds.editor"
 ```
 
