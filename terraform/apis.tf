@@ -7,7 +7,6 @@ locals {
     "cloudresourcemanager.googleapis.com",
     "storage.googleapis.com",
     "artifactregistry.googleapis.com",
-    "secretmanager.googleapis.com",
     "firebase.googleapis.com",
     "firebasehosting.googleapis.com",
   ])
