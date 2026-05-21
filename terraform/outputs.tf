@@ -13,7 +13,3 @@ output "model_bucket_name" {
   value       = google_storage_bucket.models.name
 }
 
-output "artifact_registry_repo" {
-  description = "Docker image prefix used in deploy.yml (REGION-docker.pkg.dev/PROJECT/fish-id)"
-  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.fish_id.repository_id}"
-}
