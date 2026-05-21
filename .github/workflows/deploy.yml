@@ -23,25 +23,66 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker for GCR
-        run: gcloud auth configure-docker
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
       - name: Download model from GCS
         run: gsutil cp ${{ secrets.ONNX_MODEL_GCS_URI }} app/best.onnx
 
       - name: Build and push Docker image
         run: |
-          docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/fish-id:${{ github.sha }} app/
-          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/fish-id:${{ github.sha }}
+          docker build -t ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/fish-id:${{ github.sha }} app/
+          docker push ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/fish-id:${{ github.sha }}
 
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy fish-id \
-            --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/fish-id:${{ github.sha }} \
+            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/fish-id:${{ github.sha }} \
             --region ${{ secrets.GCP_REGION }} \
             --memory 2Gi \
             --cpu 2 \
             --concurrency 5 \
             --max-instances 1 \
             --service-account fish-id-cloud-run-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-env-vars CORS_ORIGIN=https://${{ secrets.GCP_PROJECT_ID }}.web.app \
             --allow-unauthenticated
+
+  deploy-frontend:
+    name: Deploy Firebase Hosting
+    runs-on: ubuntu-latest
+    needs: deploy-api
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get Cloud Run URL
+        id: cloud-run-url
+        run: |
+          URL=$(gcloud run services describe fish-id \
+            --region ${{ secrets.GCP_REGION }} \
+            --format 'value(status.url)')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+      - name: Inject Cloud Run URL into frontend
+        run: |
+          sed -i "s|https://YOUR_CLOUD_RUN_URL|${{ steps.cloud-run-url.outputs.url }}|g" \
+            frontend/public/js/app.js
+
+      - name: Set Firebase project
+        run: |
+          sed -i "s/GCP_PROJECT_ID/${{ secrets.GCP_PROJECT_ID }}/g" \
+            frontend/.firebaserc
+
+      - name: Deploy to Firebase Hosting
+        run: npx firebase-tools@latest deploy --only hosting --project ${{ secrets.GCP_PROJECT_ID }} --non-interactive
+        working-directory: frontend

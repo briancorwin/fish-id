@@ -10,12 +10,11 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 - [gcloud CLI](https://cloud.google.com/sdk/docs/install) — authenticated and pointed at your project
 - [Firebase CLI](https://firebase.google.com/docs/cli) — `npm install -g firebase-tools && firebase login`
-- Docker (for local container builds)
 - A trained `best.onnx` model file
 
 ---
 
-## Initial Setup
+## Initial Setup via CLI
 
 ### 1. Enable required APIs
 
@@ -23,10 +22,20 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 gcloud services enable \
   firebasehosting.googleapis.com \
   run.googleapis.com \
+  artifactregistry.googleapis.com \
   cloudbuild.googleapis.com
 ```
 
-### 2. Create a service account for Cloud Run
+### 2. Create the Artifact Registry repository
+
+```bash
+gcloud artifacts repositories create fish-id \
+  --repository-format=docker \
+  --location=${GCP_REGION} \
+  --project=${GCP_PROJECT_ID}
+```
+
+### 3. Create a service account for Cloud Run
 
 The service account is granted no roles — the app makes no GCP API calls.
 
@@ -41,29 +50,32 @@ gcloud iam service-accounts create fish-id-cloud-run-sa \
 
 ### API (Cloud Run)
 
-`scripts/build.sh` takes the path to your `best.onnx` and your GCP project ID, copies the model into `app/` for the build, then removes it.
+`scripts/build.sh` takes the path to your `best.onnx`, your GCP project ID, and an optional region (default: `us-central1`). It copies the model into `app/` for the build, then removes it.
 
 ```bash
-scripts/build.sh /path/to/best.onnx GCP_PROJECT_ID
+scripts/build.sh /path/to/best.onnx ${GCP_PROJECT_ID} [${GCP_REGION}]
 ```
 
-This runs the following Cloud Build step under the hood:
+This submits the build to Cloud Build, which builds the image and pushes it to Artifact Registry:
 
 ```bash
-gcloud builds submit app/ --tag gcr.io/GCP_PROJECT_ID/fish-id
+gcloud builds submit app/ \
+  --tag ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/fish-id/fish-id \
+  --project ${GCP_PROJECT_ID}
 ```
 
 Then deploy to Cloud Run:
 
 ```bash
 gcloud run deploy fish-id \
-  --image gcr.io/GCP_PROJECT_ID/fish-id \
-  --region GCP_REGION \
+  --image ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/fish-id/fish-id \
+  --region ${GCP_REGION} \
   --memory 2Gi \
   --cpu 2 \
   --concurrency 5 \
   --max-instances 1 \
-  --service-account fish-id-cloud-run-sa@GCP_PROJECT_ID.iam.gserviceaccount.com \
+  --service-account fish-id-cloud-run-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com \
+  --set-env-vars CORS_ORIGIN=https://${GCP_PROJECT_ID}.web.app \
   --allow-unauthenticated
 ```
 
@@ -72,7 +84,7 @@ gcloud run deploy fish-id \
 Create the Firebase Hosting site (one-time):
 
 ```bash
-firebase hosting:sites:create YOUR_SITE_NAME
+firebase hosting:sites:create ${YOUR_SITE_NAME}
 ```
 
 Then deploy:
@@ -80,12 +92,76 @@ Then deploy:
 ```bash
 cd frontend/
 
-# Set projects.default in .firebaserc to GCP_PROJECT_ID
-# Add "site": "YOUR_SITE_NAME" under "hosting" in firebase.json
+# Set projects.default in .firebaserc to ${GCP_PROJECT_ID}
+# Add "site": "${YOUR_SITE_NAME}" under "hosting" in firebase.json
 # In public/js/app.js, replace YOUR_CLOUD_RUN_URL in API_BASE with your Cloud Run URL
 
 firebase deploy --only hosting
 ```
+
+---
+
+## Initial Setup via Terraform
+
+Terraform provisions all required GCP infrastructure: APIs, service accounts, Workload Identity Federation, Artifact Registry, and the GCS bucket for model storage.
+
+### 1. Apply
+
+```bash
+cd terraform/
+terraform init
+terraform plan -var="project_id=${GCP_PROJECT_ID}" -var="github_repo=${YOUR_GITHUB_ORG}/fish-id"
+terraform apply -var="project_id=${GCP_PROJECT_ID}" -var="github_repo=${YOUR_GITHUB_ORG}/fish-id"
+```
+
+Region defaults to `us-central1`. To override:
+
+```bash
+terraform apply \
+  -var="project_id=${GCP_PROJECT_ID}" \
+  -var="region=${GCP_REGION}" \
+  -var="github_repo=${YOUR_GITHUB_ORG}/fish-id"
+```
+
+### 2. Capture outputs
+
+After apply, retrieve the values needed for GitHub secrets:
+
+```bash
+terraform output workload_identity_provider
+terraform output cicd_service_account_email
+terraform output model_bucket_name
+```
+
+---
+
+## Deployment via GitHub Actions
+
+Requires [Initial Setup via Terraform](#initial-setup-via-terraform) to be completed first — it creates the GCS bucket for model storage, the CI/CD service account, and the Workload Identity Federation configuration that GitHub Actions authenticates with.
+
+On every PR merged to `main`, two jobs run in sequence: `deploy-api` (Cloud Run) then `deploy-frontend` (Firebase Hosting). Both authenticate to GCP using Workload Identity Federation — no long-lived credentials required.
+
+### 1. Upload the model to GCS
+
+```bash
+gsutil cp /path/to/best.onnx gs://$(terraform -chdir=terraform output -raw model_bucket_name)/best.onnx
+```
+
+### 2. Set GitHub Actions secrets
+
+Navigate to **Settings → Secrets and variables → Actions** in the GitHub repo and add:
+
+| Secret | Value |
+|---|---|
+| `GCP_PROJECT_ID` | Your GCP project ID |
+| `GCP_REGION` | Region used during Terraform apply (e.g. `us-central1`) |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of `terraform output workload_identity_provider` |
+| `GCP_SERVICE_ACCOUNT` | Output of `terraform output cicd_service_account_email` |
+| `ONNX_MODEL_GCS_URI` | `gs://${BUCKET_NAME}/best.onnx` (bucket from `terraform output model_bucket_name`) |
+
+### 3. Deploy
+
+Merge a PR to `main`. The Actions workflow will build and push the container image to Artifact Registry, deploy to Cloud Run, inject the Cloud Run URL into the frontend, and deploy to Firebase Hosting automatically.
 
 ---
 
