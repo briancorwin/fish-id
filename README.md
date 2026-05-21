@@ -41,29 +41,32 @@ gcloud iam service-accounts create fish-id-cloud-run-sa \
 
 ### API (Cloud Run)
 
-`scripts/build.sh` takes the path to your `best.onnx` and your GCP project ID, copies the model into `app/` for the build, then removes it.
+`scripts/build.sh` takes the path to your `best.onnx`, your GCP project ID, and an optional region (default: `us-central1`). It copies the model into `app/` for the build, then removes it.
 
 ```bash
-scripts/build.sh /path/to/best.onnx GCP_PROJECT_ID
+scripts/build.sh /path/to/best.onnx GCP_PROJECT_ID [GCP_REGION]
 ```
 
-This runs the following Cloud Build step under the hood:
+This builds and pushes to Artifact Registry:
 
 ```bash
-gcloud builds submit app/ --tag gcr.io/GCP_PROJECT_ID/fish-id
+gcloud auth configure-docker GCP_REGION-docker.pkg.dev
+docker build -t GCP_REGION-docker.pkg.dev/GCP_PROJECT_ID/fish-id/fish-id app/
+docker push GCP_REGION-docker.pkg.dev/GCP_PROJECT_ID/fish-id/fish-id
 ```
 
 Then deploy to Cloud Run:
 
 ```bash
 gcloud run deploy fish-id \
-  --image gcr.io/GCP_PROJECT_ID/fish-id \
+  --image GCP_REGION-docker.pkg.dev/GCP_PROJECT_ID/fish-id/fish-id \
   --region GCP_REGION \
   --memory 2Gi \
   --cpu 2 \
   --concurrency 5 \
   --max-instances 1 \
   --service-account fish-id-cloud-run-sa@GCP_PROJECT_ID.iam.gserviceaccount.com \
+  --set-env-vars CORS_ORIGIN=https://GCP_PROJECT_ID.web.app \
   --allow-unauthenticated
 ```
 
