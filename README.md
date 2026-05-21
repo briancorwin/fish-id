@@ -31,7 +31,7 @@ gcloud services enable \
 The service account is granted no roles — the app makes no GCP API calls.
 
 ```bash
-gcloud iam service-accounts create fish-id-sa \
+gcloud iam service-accounts create fish-id-cloud-run-sa \
   --display-name="fish-id Cloud Run SA"
 ```
 
@@ -41,37 +41,29 @@ gcloud iam service-accounts create fish-id-sa \
 
 ### API (Cloud Run)
 
-Grant your user account permission to submit builds:
-
-```bash
-gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-  --member="user:GCLOUD_USER" \
-  --role="roles/cloudbuild.builds.editor"
-```
-
 `scripts/build.sh` takes the path to your `best.onnx` and your GCP project ID, copies the model into `app/` for the build, then removes it.
 
 ```bash
-scripts/build.sh /path/to/best.onnx YOUR_PROJECT_ID
+scripts/build.sh /path/to/best.onnx GCP_PROJECT_ID
 ```
 
 This runs the following Cloud Build step under the hood:
 
 ```bash
-gcloud builds submit app/ --tag gcr.io/YOUR_PROJECT_ID/fish-id
+gcloud builds submit app/ --tag gcr.io/GCP_PROJECT_ID/fish-id
 ```
 
 Then deploy to Cloud Run:
 
 ```bash
 gcloud run deploy fish-id \
-  --image gcr.io/YOUR_PROJECT_ID/fish-id \
-  --region us-central1 \
+  --image gcr.io/GCP_PROJECT_ID/fish-id \
+  --region GCP_REGION \
   --memory 2Gi \
   --cpu 2 \
   --concurrency 5 \
   --max-instances 1 \
-  --service-account fish-id-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com \
+  --service-account fish-id-cloud-run-sa@GCP_PROJECT_ID.iam.gserviceaccount.com \
   --allow-unauthenticated
 ```
 
@@ -88,7 +80,7 @@ Then deploy:
 ```bash
 cd frontend/
 
-# Set projects.default in .firebaserc to YOUR_PROJECT_ID
+# Set projects.default in .firebaserc to GCP_PROJECT_ID
 # Add "site": "YOUR_SITE_NAME" under "hosting" in firebase.json
 # In public/js/app.js, replace YOUR_CLOUD_RUN_URL in API_BASE with your Cloud Run URL
 
