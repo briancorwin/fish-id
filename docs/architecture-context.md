@@ -129,7 +129,7 @@ Both jobs authenticate using **Workload Identity Federation** — no long-lived 
 
 ## Security
 
-- **Workload Identity Federation** — no long-lived service account keys; GitHub Actions uses short-lived tokens scoped to the specific repo
+- **Workload Identity Federation** — no long-lived service account keys; short-lived tokens are scoped to the specific repo and restricted to the `main` branch, so feature branches cannot impersonate the CI/CD service account
 - **Cloud Run service account** — assigned no IAM roles. The app makes no GCP API calls, so no permissions are needed. This limits blast radius if the app is ever exploited.
 - **Image validation** — magic bytes checked server-side to reject non-image payloads regardless of Content-Type header
 - **CORS** — restricted to the Firebase Hosting origin (`https://PROJECT_ID.web.app`)

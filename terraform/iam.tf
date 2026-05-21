@@ -32,7 +32,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "attribute.repository" = "assertion.repository"
   }
 
-  attribute_condition = "attribute.repository == \"${var.github_repo}\""
+  attribute_condition = "attribute.repository == \"${var.github_repo}\" && attribute.ref == \"refs/heads/main\""
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
@@ -46,10 +46,10 @@ resource "google_service_account_iam_member" "cicd_wif" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-# Deploy Cloud Run services
-resource "google_project_iam_member" "cicd_run_admin" {
+# Deploy and update Cloud Run services — developer role excludes service deletion and IAM policy management
+resource "google_project_iam_member" "cicd_run_developer" {
   project = var.project_id
-  role    = "roles/run.admin"
+  role    = "roles/run.developer"
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
