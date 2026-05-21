@@ -24,7 +24,6 @@ Directories:
 - Python 3.11+
 - `requirements.txt` lives in `app/`
 - Environment variables (never hardcoded): `GCP_PROJECT`, `GCP_REGION`
-- Secrets via Secret Manager, not `.env` files in production
 - Image upload limit: 5MB enforced in both frontend JS and Flask
 - `best.onnx` is not committed to the repo — place it in `app/` before building the container
 - GCP setup steps (APIs, service account, deploy commands) live in `README.md`
