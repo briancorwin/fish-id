@@ -55,7 +55,9 @@ fish-id/
 | Need | GCP Service |
 |---|---|
 | Host web API | Cloud Run |
+| Container builds (CLI) | Cloud Build |
 | Container images | Artifact Registry |
+| Container builds (GitHub Actions) | Docker on runner |
 | Frontend hosting | Firebase Hosting |
 | Model storage | Cloud Storage |
 | Keyless CI/CD auth | Workload Identity Federation |

@@ -20,6 +20,4 @@ IMAGE="$REGION-docker.pkg.dev/$PROJECT/fish-id/fish-id"
 cp "$MODEL_PATH" app/best.onnx
 trap 'rm -f app/best.onnx' EXIT
 
-gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
-docker build -t "$IMAGE" app/
-docker push "$IMAGE"
+gcloud builds submit app/ --tag "$IMAGE" --project "$PROJECT"
