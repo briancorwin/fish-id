@@ -95,9 +95,9 @@ Image validation on upload:
 - Exported to ONNX for CPU inference (~300–600ms on Cloud Run 2 vCPU)
 - When deployed via GitHub Actions, `best.onnx` is downloaded from GCS (`PROJECT_ID-fish-id-models` bucket) during the workflow. When deploying manually via CLI, `scripts/build.sh` expects a local copy of `best.onnx` passed as an argument.
 
-### Rate Limiting (`app/rate_limiter.py`)
+### Rate Limiting
 
-- In-process token bucket: 5 req/min per IP, burst of 3
+- In-process token bucket (`app/rate_limiter.py`): 5 req/min per IP, burst of 3
 - Cloud Run: `--max-instances 1`, `--concurrency 5`
 
 ### Frontend
