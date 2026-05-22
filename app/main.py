@@ -1,7 +1,9 @@
 import os
+import ast
+import json
 import numpy as np
 import cv2
-from ultralytics import YOLO
+import onnxruntime as ort
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -13,6 +15,7 @@ CORS(app, resources={r"/*": {"origins": os.environ.get("CORS_ORIGIN", "*")}})
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 CONF_THRESHOLD = 0.25
 NMS_THRESHOLD = 0.4
+INPUT_SIZE = (640, 640)
 
 # Valid image magic bytes: (header, optional extra check at offset 8)
 _IMAGE_MAGIC = [
@@ -34,7 +37,8 @@ def _is_valid_image(data: bytes) -> bool:
 
 
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
-_model = YOLO(_MODEL_PATH)
+_session = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
+_input_name = _session.get_inputs()[0].name
 
 # Used only if the model was exported without class name metadata
 _FALLBACK_NAMES: dict[int, str] = {
@@ -42,23 +46,98 @@ _FALLBACK_NAMES: dict[int, str] = {
     # 1: "Bluegill",
 }
 
-_class_names: dict = _model.names or _FALLBACK_NAMES
+
+def _load_class_names(session) -> dict[int, str]:
+    try:
+        meta = session.get_modelmeta()
+        names_str = meta.custom_metadata_map.get("names", "")
+        if names_str:
+            try:
+                raw = json.loads(names_str)
+            except (json.JSONDecodeError, ValueError):
+                raw = ast.literal_eval(names_str)
+            return {int(k): v for k, v in raw.items()}
+    except Exception:
+        pass
+    return _FALLBACK_NAMES
 
 
-def _postprocess(result) -> list:
-    boxes = result.boxes
-    if boxes is None or len(boxes) == 0:
+_class_names: dict = _load_class_names(_session)
+
+
+def _preprocess(image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
+    h, w = image.shape[:2]
+    target_h, target_w = INPUT_SIZE
+    scale = min(target_w / w, target_h / h)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(image, (new_w, new_h))
+
+    padded = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
+    pad_top = (target_h - new_h) // 2
+    pad_left = (target_w - new_w) // 2
+    padded[pad_top : pad_top + new_h, pad_left : pad_left + new_w] = resized
+
+    rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
+    blob = rgb.astype(np.float32) / 255.0
+    blob = blob.transpose(2, 0, 1)[np.newaxis]  # (1, 3, H, W)
+    return blob, scale, pad_left, pad_top
+
+
+def _postprocess(
+    raw_output: np.ndarray, orig_shape: tuple, scale: float, pad_left: int, pad_top: int
+) -> list:
+    # raw_output shape: (1, 4 + num_classes, num_anchors)
+    predictions = raw_output[0].T  # (num_anchors, 4 + num_classes)
+
+    scores = predictions[:, 4:]
+    class_ids = np.argmax(scores, axis=1)
+    confidences = scores[np.arange(len(scores)), class_ids]
+
+    mask = confidences >= CONF_THRESHOLD
+    if not mask.any():
         return []
+
+    boxes_raw = predictions[mask, :4]
+    class_ids = class_ids[mask]
+    confidences = confidences[mask]
+
+    cx, cy, bw, bh = boxes_raw[:, 0], boxes_raw[:, 1], boxes_raw[:, 2], boxes_raw[:, 3]
+    x1 = cx - bw / 2
+    y1 = cy - bh / 2
+    x2 = cx + bw / 2
+    y2 = cy + bh / 2
+
+    orig_h, orig_w = orig_shape[:2]
+    x1 = np.clip((x1 - pad_left) / scale, 0, orig_w)
+    y1 = np.clip((y1 - pad_top) / scale, 0, orig_h)
+    x2 = np.clip((x2 - pad_left) / scale, 0, orig_w)
+    y2 = np.clip((y2 - pad_top) / scale, 0, orig_h)
+
+    boxes_for_nms = [
+        [float(x1[i]), float(y1[i]), float(x2[i] - x1[i]), float(y2[i] - y1[i])]
+        for i in range(len(x1))
+    ]
+    indices = cv2.dnn.NMSBoxes(
+        boxes_for_nms, confidences.tolist(), CONF_THRESHOLD, NMS_THRESHOLD
+    )
+
+    if len(indices) == 0:
+        return []
+
+    indices = np.array(indices).flatten()
     return [
         {
-            "class_id": int(cls),
-            "class_name": _class_names.get(int(cls), f"Class {int(cls)}"),
-            "confidence": round(float(conf), 4),
-            "box": {"x1": int(x1), "y1": int(y1), "x2": int(x2), "y2": int(y2)},
+            "class_id": int(class_ids[i]),
+            "class_name": _class_names.get(int(class_ids[i]), f"Class {int(class_ids[i])}"),
+            "confidence": round(float(confidences[i]), 4),
+            "box": {
+                "x1": int(x1[i]),
+                "y1": int(y1[i]),
+                "x2": int(x2[i]),
+                "y2": int(y2[i]),
+            },
         }
-        for (x1, y1, x2, y2), conf, cls in zip(
-            boxes.xyxy.tolist(), boxes.conf.tolist(), boxes.cls.tolist()
-        )
+        for i in indices
     ]
 
 
@@ -87,8 +166,9 @@ def detect():
     if image is None:
         return jsonify({"error": "Could not decode image"}), 400
 
-    results = _model(image, conf=CONF_THRESHOLD, iou=NMS_THRESHOLD, verbose=False)
-    detections = _postprocess(results[0])
+    blob, scale, pad_left, pad_top = _preprocess(image)
+    raw_output = _session.run(None, {_input_name: blob})[0]
+    detections = _postprocess(raw_output, image.shape, scale, pad_left, pad_top)
 
     return jsonify({
         "fish_count": len(detections),

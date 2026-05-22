@@ -7,31 +7,53 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
-# Mock ultralytics.YOLO before main.py is imported — the model is loaded at
-# module level so the patch must be in place at import time.
-_mock_model = MagicMock()
-_mock_model.names = {0: "Largemouth Bass", 1: "Bluegill", 2: "Crappie", 3: "Catfish"}
+NUM_CLASSES = 4
 
-with patch("ultralytics.YOLO", return_value=_mock_model):
+# Mock onnxruntime.InferenceSession before main.py is imported — the session is
+# created at module level so the patch must be in place at import time.
+_mock_input = MagicMock()
+_mock_input.name = "images"
+
+_mock_meta = MagicMock()
+_mock_meta.custom_metadata_map = {
+    "names": '{"0": "Largemouth Bass", "1": "Bluegill", "2": "Crappie", "3": "Catfish"}'
+}
+
+_mock_session = MagicMock()
+_mock_session.get_inputs.return_value = [_mock_input]
+_mock_session.get_modelmeta.return_value = _mock_meta
+
+with patch("onnxruntime.InferenceSession", return_value=_mock_session):
     import main
 
 
-def make_yolo_result(detections: list[dict]):
-    """Build a fake Ultralytics Results object.
+def make_onnx_output(
+    detections: list[dict],
+    scale: float = 1.0,
+    pad_left: int = 0,
+    pad_top: int = 0,
+) -> np.ndarray:
+    """Build a fake ONNX raw output array.
 
     Each detection dict: {x1, y1, x2, y2, conf, class_id (optional, default 0)}
-    in original image pixel space.
+    in original image pixel space. Returns shape (1, 4 + NUM_CLASSES, num_anchors).
     """
-    result = MagicMock()
-    boxes = MagicMock()
-    boxes.__len__ = MagicMock(return_value=len(detections))
-    boxes.xyxy.tolist.return_value = [
-        [d["x1"], d["y1"], d["x2"], d["y2"]] for d in detections
-    ]
-    boxes.conf.tolist.return_value = [d["conf"] for d in detections]
-    boxes.cls.tolist.return_value = [float(d.get("class_id", 0)) for d in detections]
-    result.boxes = boxes
-    return result
+    num_anchors = max(len(detections), 1)
+    output = np.zeros((1, 4 + NUM_CLASSES, num_anchors), dtype=np.float32)
+
+    for i, d in enumerate(detections):
+        cx = (d["x1"] + d["x2"]) / 2 * scale + pad_left
+        cy = (d["y1"] + d["y2"]) / 2 * scale + pad_top
+        bw = (d["x2"] - d["x1"]) * scale
+        bh = (d["y2"] - d["y1"]) * scale
+        output[0, 0, i] = cx
+        output[0, 1, i] = cy
+        output[0, 2, i] = bw
+        output[0, 3, i] = bh
+        class_id = int(d.get("class_id", 0))
+        output[0, 4 + class_id, i] = d["conf"]
+
+    return output
 
 
 def make_jpeg(width: int = 100, height: int = 100) -> bytes:
@@ -50,8 +72,8 @@ def client():
 
 
 @pytest.fixture
-def mock_model():
-    return _mock_model
+def mock_session():
+    return _mock_session
 
 
 @pytest.fixture(autouse=True)

@@ -57,9 +57,9 @@ class TestRateLimitDecorator:
         assert resp.status_code == 429
         assert "Rate limit exceeded" in resp.get_json()["error"]
 
-    def test_uses_x_forwarded_for_header(self, client, mock_model):
-        from conftest import make_jpeg, make_yolo_result
-        mock_model.return_value = [make_yolo_result([])]
+    def test_uses_x_forwarded_for_header(self, client, mock_session):
+        from conftest import make_jpeg, make_onnx_output
+        mock_session.run.return_value = [make_onnx_output([])]
         img = make_jpeg()
 
         for _ in range(3):
@@ -74,10 +74,10 @@ class TestRateLimitDecorator:
                            headers={"X-Forwarded-For": "9.9.9.9"})
         assert resp.status_code == 429
 
-    def test_different_ips_have_independent_limits(self, client, mock_model):
-        from conftest import make_jpeg, make_yolo_result
+    def test_different_ips_have_independent_limits(self, client, mock_session):
+        from conftest import make_jpeg, make_onnx_output
         import io
-        mock_model.return_value = [make_yolo_result([])]
+        mock_session.run.return_value = [make_onnx_output([])]
 
         for _ in range(3):
             client.post("/detect",
