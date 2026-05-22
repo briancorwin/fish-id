@@ -6,10 +6,28 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 ---
 
+## CLI Tools
+
+### Required
+
+| Tool | Purpose |
+|------|---------|
+| [`gcloud`](https://cloud.google.com/sdk/docs/install) | Authenticate to GCP, build/push container via Cloud Build, deploy to Cloud Run |
+| [`firebase`](https://firebase.google.com/docs/cli) | Deploy the static frontend to Firebase Hosting (`npm install -g firebase-tools`) |
+| [`terraform`](https://developer.hashicorp.com/terraform/install) | Provision all GCP infrastructure (APIs, service accounts, Workload Identity, Artifact Registry, GCS bucket) |
+
+### Optional
+
+| Tool | Purpose |
+|------|---------|
+| `gsutil` | Upload `best.onnx` to GCS for the GitHub Actions CI/CD path (bundled with `gcloud`) |
+| [`gh`](https://cli.github.com) | Manage GitHub Actions secrets and open PRs from the CLI |
+
+---
+
 ## Prerequisites
 
-- [gcloud CLI](https://cloud.google.com/sdk/docs/install) — authenticated and pointed at your project
-- [Firebase CLI](https://firebase.google.com/docs/cli) — `npm install -g firebase-tools && firebase login`
+- `gcloud`, `firebase`, and `terraform` installed and authenticated (see [CLI Tools](#cli-tools) above)
 - A trained `best.onnx` model file
 
 ---
