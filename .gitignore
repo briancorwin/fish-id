@@ -220,3 +220,19 @@ __marimo__/
 # Model weights (local only — baked into container at build time)
 *.onnx
 *.pt
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/crash.log
+terraform/*.tfvars
+terraform/override.tf
+terraform/override.tf.json
+terraform/*_override.tf
+terraform/*_override.tf.json
+
+# Firebase CLI
+frontend/.firebase/
+frontend/firebase-debug.log
+frontend/.runtimeconfig.json

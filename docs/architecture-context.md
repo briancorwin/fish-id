@@ -35,7 +35,9 @@ fish-id/
 │   ├── apis.tf
 │   ├── iam.tf
 │   ├── storage.tf
-│   └── artifact_registry.tf
+│   ├── artifact_registry.tf
+│   └── .terraform.lock.hcl    # committed to pin provider versions
+├── notebooks/                  # Jupyter notebooks (e.g. Colab training)
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml              # tests + lint on every PR
@@ -43,6 +45,10 @@ fish-id/
 ├── scripts/
 │   └── build.sh                # manual CLI build: copies best.onnx into app/, builds container, cleans up
 ├── tests/
+│   ├── conftest.py
+│   ├── requirements.txt
+│   ├── test_main.py
+│   └── test_rate_limiter.py
 └── README.md
 ```
 
@@ -89,9 +95,9 @@ Image validation on upload:
 - Exported to ONNX for CPU inference (~300–600ms on Cloud Run 2 vCPU)
 - When deployed via GitHub Actions, `best.onnx` is downloaded from GCS (`PROJECT_ID-fish-id-models` bucket) during the workflow. When deploying manually via CLI, `scripts/build.sh` expects a local copy of `best.onnx` passed as an argument.
 
-### Rate Limiting (`app/rate_limiter.py`)
+### Rate Limiting
 
-- In-process token bucket: 5 req/min per IP, burst of 3
+- In-process token bucket (`app/rate_limiter.py`): 5 req/min per IP, burst of 3
 - Cloud Run: `--max-instances 1`, `--concurrency 5`
 
 ### Frontend
@@ -100,7 +106,7 @@ Static site on Firebase Hosting; talks to Cloud Run API.
 Draws bounding boxes on the image via canvas using the box coordinates returned by `/detect`.
 Shows fish count and inference time.
 
-When deployed via GitHub Actions, the Cloud Run URL is injected into `frontend/public/js/app.js` automatically. When deploying manually via CLI, you must replace `YOUR_CLOUD_RUN_URL` in `API_BASE` in `app.js` before running `firebase deploy`. CORS on Cloud Run is restricted to the Firebase Hosting origin.
+When deployed via GitHub Actions, the Cloud Run URL is injected into `frontend/public/js/app.js` automatically, and `GCP_PROJECT_ID` in `frontend/.firebaserc` is replaced with the real project ID. When deploying manually via CLI, you must replace `https://YOUR_CLOUD_RUN_URL` in `API_BASE` in `app.js` and set `projects.default` in `.firebaserc` to your project ID before running `firebase deploy`. CORS on Cloud Run is restricted to the Firebase Hosting origin.
 
 ---
 
@@ -112,7 +118,7 @@ GitHub Actions handles all deploys on merge to `main`. Manual CLI deployment via
 
 Two jobs run sequentially on every merged PR:
 
-1. **`deploy-api`** — builds the Docker image, pushes to Artifact Registry, downloads `best.onnx` from GCS, deploys to Cloud Run
+1. **`deploy-api`** — downloads `best.onnx` from GCS into `app/`, builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run
 2. **`deploy-frontend`** — fetches the Cloud Run URL, injects it into `app.js`, deploys `frontend/` to Firebase Hosting
 
 Both jobs authenticate using **Workload Identity Federation** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
