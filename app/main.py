@@ -15,7 +15,6 @@ CORS(app, resources={r"/*": {"origins": os.environ.get("CORS_ORIGIN", "*")}})
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 CONF_THRESHOLD = 0.25
 NMS_THRESHOLD = 0.4
-INPUT_SIZE = (640, 640)
 
 # Valid image magic bytes: (header, optional extra check at offset 8)
 _IMAGE_MAGIC = [
@@ -38,7 +37,9 @@ def _is_valid_image(data: bytes) -> bool:
 
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
 _session = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
-_input_name = _session.get_inputs()[0].name
+_input_meta = _session.get_inputs()[0]
+_input_name = _input_meta.name
+_input_h, _input_w = _input_meta.shape[2], _input_meta.shape[3]  # (batch, C, H, W)
 
 # Used only if the model was exported without class name metadata
 _FALLBACK_NAMES: dict[int, str] = {
@@ -67,7 +68,7 @@ _class_names: dict = _load_class_names(_session)
 
 def _preprocess(image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
     h, w = image.shape[:2]
-    target_h, target_w = INPUT_SIZE
+    target_h, target_w = _input_h, _input_w
     scale = min(target_w / w, target_h / h)
     new_w, new_h = int(w * scale), int(h * scale)
     resized = cv2.resize(image, (new_w, new_h))

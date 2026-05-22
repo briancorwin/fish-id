@@ -13,6 +13,7 @@ NUM_CLASSES = 4
 # created at module level so the patch must be in place at import time.
 _mock_input = MagicMock()
 _mock_input.name = "images"
+_mock_input.shape = [1, 3, 640, 640]  # (batch, C, H, W) — tests use 640x640 jpegs
 
 _mock_meta = MagicMock()
 _mock_meta.custom_metadata_map = {
