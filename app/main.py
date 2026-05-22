@@ -1,6 +1,7 @@
 import os
 import ast
 import json
+import logging
 import numpy as np
 import cv2
 import onnxruntime as ort
@@ -9,12 +10,15 @@ from flask_cors import CORS
 
 from rate_limiter import rate_limit
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": os.environ.get("CORS_ORIGIN", "*")}})
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 CONF_THRESHOLD = 0.25
 NMS_THRESHOLD = 0.4
+_LETTERBOX_FILL = 114
 
 # Valid image magic bytes: (header, optional extra check at offset 8)
 _IMAGE_MAGIC = [
@@ -24,6 +28,15 @@ _IMAGE_MAGIC = [
     (b"GIF89a", None),             # GIF
     (b"RIFF", b"WEBP"),            # WEBP
 ]
+
+_MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
+
+_session = None
+_input_name = None
+_input_h = None
+_input_w = None
+_class_names = None
+_model_ready = False
 
 
 def _is_valid_image(data: bytes) -> bool:
@@ -35,20 +48,7 @@ def _is_valid_image(data: bytes) -> bool:
     return False
 
 
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
-_session = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
-_input_meta = _session.get_inputs()[0]
-_input_name = _input_meta.name
-_input_h, _input_w = _input_meta.shape[2], _input_meta.shape[3]  # (batch, C, H, W)
-
-# Used only if the model was exported without class name metadata
-_FALLBACK_NAMES: dict[int, str] = {
-    # 0: "Largemouth Bass",
-    # 1: "Bluegill",
-}
-
-
-def _load_class_names(session) -> dict[int, str]:
+def _load_class_names(session) -> dict[int, str] | None:
     try:
         meta = session.get_modelmeta()
         names_str = meta.custom_metadata_map.get("names", "")
@@ -58,12 +58,25 @@ def _load_class_names(session) -> dict[int, str]:
             except (json.JSONDecodeError, ValueError):
                 raw = ast.literal_eval(names_str)
             return {int(k): v for k, v in raw.items()}
-    except Exception:
-        pass
-    return _FALLBACK_NAMES
+    except Exception as e:
+        logger.error("Failed to load class names from model metadata: %s", e)
+        return None
+    logger.error("Model metadata contains no class names")
+    return None
 
 
-_class_names: dict = _load_class_names(_session)
+def _load_model():
+    global _session, _input_name, _input_h, _input_w, _class_names, _model_ready
+    if _model_ready:
+        return
+    session = ort.InferenceSession(_MODEL_PATH, providers=["CPUExecutionProvider"])
+    input_meta = session.get_inputs()[0]
+    _session = session
+    _input_name = input_meta.name
+    _input_h = input_meta.shape[2]
+    _input_w = input_meta.shape[3]
+    _class_names = _load_class_names(session)
+    _model_ready = True
 
 
 def _preprocess(image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
@@ -73,7 +86,7 @@ def _preprocess(image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
     new_w, new_h = int(w * scale), int(h * scale)
     resized = cv2.resize(image, (new_w, new_h))
 
-    padded = np.full((target_h, target_w, 3), 114, dtype=np.uint8)
+    padded = np.full((target_h, target_w, 3), _LETTERBOX_FILL, dtype=np.uint8)
     pad_top = (target_h - new_h) // 2
     pad_left = (target_w - new_w) // 2
     padded[pad_top : pad_top + new_h, pad_left : pad_left + new_w] = resized
@@ -125,11 +138,12 @@ def _postprocess(
     if len(indices) == 0:
         return []
 
-    indices = np.array(indices).flatten()
-    return [
-        {
-            "class_id": int(class_ids[i]),
-            "class_name": _class_names.get(int(class_ids[i]), f"Class {int(class_ids[i])}"),
+    result = []
+    for i in np.array(indices).flatten():
+        cid = int(class_ids[i])
+        result.append({
+            "class_id": cid,
+            "class_name": _class_names.get(cid, f"Class {cid}"),
             "confidence": round(float(confidences[i]), 4),
             "box": {
                 "x1": int(x1[i]),
@@ -137,9 +151,8 @@ def _postprocess(
                 "x2": int(x2[i]),
                 "y2": int(y2[i]),
             },
-        }
-        for i in indices
-    ]
+        })
+    return result
 
 
 @app.route("/health")
@@ -150,6 +163,10 @@ def health():
 @app.route("/detect", methods=["POST"])
 @rate_limit
 def detect():
+    _load_model()
+    if _class_names is None:
+        return jsonify({"error": "Model not ready"}), 500
+
     file = request.files.get("image")
     if not file:
         return jsonify({"error": "No image provided"}), 400
@@ -178,4 +195,5 @@ def detect():
 
 
 if __name__ == "__main__":
+    _load_model()
     app.run(host="0.0.0.0", port=8080)

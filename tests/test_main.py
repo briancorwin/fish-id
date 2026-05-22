@@ -1,7 +1,10 @@
 import io
+import logging
+import numpy as np
 import pytest
+from unittest.mock import MagicMock
 import main
-from conftest import make_jpeg, make_onnx_output
+from helpers import make_jpeg, make_onnx_output
 
 _ORIG_SHAPE = (640, 640, 3)
 
@@ -36,6 +39,83 @@ class TestIsValidImage:
 
     def test_empty_bytes_rejected(self):
         assert main._is_valid_image(b"") is False
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _load_class_names
+# ---------------------------------------------------------------------------
+
+class TestLoadClassNames:
+    def test_returns_dict_from_valid_json(self):
+        session = MagicMock()
+        session.get_modelmeta.return_value.custom_metadata_map = {
+            "names": '{"0": "Bass", "1": "Bluegill"}'
+        }
+        assert main._load_class_names(session) == {0: "Bass", 1: "Bluegill"}
+
+    def test_falls_back_to_ast_on_invalid_json(self):
+        session = MagicMock()
+        session.get_modelmeta.return_value.custom_metadata_map = {
+            "names": "{0: 'Bass', 1: 'Bluegill'}"  # Python literal, not valid JSON
+        }
+        assert main._load_class_names(session) == {0: "Bass", 1: "Bluegill"}
+
+    def test_returns_none_and_logs_when_get_modelmeta_raises(self, caplog):
+        session = MagicMock()
+        session.get_modelmeta.side_effect = RuntimeError("no metadata")
+        with caplog.at_level(logging.ERROR, logger="main"):
+            result = main._load_class_names(session)
+        assert result is None
+        assert "Failed to load class names" in caplog.text
+
+    def test_returns_none_and_logs_when_names_missing(self, caplog):
+        session = MagicMock()
+        session.get_modelmeta.return_value.custom_metadata_map = {}
+        with caplog.at_level(logging.ERROR, logger="main"):
+            result = main._load_class_names(session)
+        assert result is None
+        assert "no class names" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _preprocess
+# ---------------------------------------------------------------------------
+
+class TestPreprocess:
+    def test_blob_shape(self):
+        img = np.zeros((100, 100, 3), dtype=np.uint8)
+        blob, _, _, _ = main._preprocess(img)
+        assert blob.shape == (1, 3, 640, 640)
+
+    def test_blob_values_normalized(self):
+        img = np.full((100, 100, 3), 255, dtype=np.uint8)
+        blob, _, _, _ = main._preprocess(img)
+        assert blob.dtype == np.float32
+        assert blob.min() >= 0.0
+        assert blob.max() <= 1.0
+
+    def test_square_image_no_padding(self):
+        img = np.zeros((640, 640, 3), dtype=np.uint8)
+        _, scale, pad_left, pad_top = main._preprocess(img)
+        assert scale == 1.0
+        assert pad_left == 0
+        assert pad_top == 0
+
+    def test_wide_image_pads_top_and_bottom(self):
+        # 1280×640 → scale=0.5, resized to 640×320, pad_top=160
+        img = np.zeros((640, 1280, 3), dtype=np.uint8)
+        _, scale, pad_left, pad_top = main._preprocess(img)
+        assert scale == pytest.approx(0.5)
+        assert pad_left == 0
+        assert pad_top == 160
+
+    def test_tall_image_pads_left_and_right(self):
+        # 640×1280 → scale=0.5, resized to 320×640, pad_left=160
+        img = np.zeros((1280, 640, 3), dtype=np.uint8)
+        _, scale, pad_left, pad_top = main._preprocess(img)
+        assert scale == pytest.approx(0.5)
+        assert pad_left == 160
+        assert pad_top == 0
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +164,20 @@ class TestPostprocess:
         det = main._postprocess(output, _ORIG_SHAPE, 1.0, 0, 0)[0]
         assert set(det.keys()) == {"class_id", "class_name", "confidence", "box"}
         assert set(det["box"].keys()) == {"x1", "y1", "x2", "y2"}
+
+    def test_below_threshold_confidence_filtered_out(self):
+        output = make_onnx_output([
+            {"x1": 0, "y1": 0, "x2": 100, "y2": 100, "conf": 0.1},
+        ])
+        assert main._postprocess(output, _ORIG_SHAPE, 1.0, 0, 0) == []
+
+    def test_unknown_class_id_uses_fallback_name(self):
+        output = make_onnx_output([
+            {"x1": 0, "y1": 0, "x2": 100, "y2": 100, "conf": 0.9, "class_id": 99},
+        ])
+        det = main._postprocess(output, _ORIG_SHAPE, 1.0, 0, 0)[0]
+        assert det["class_id"] == 99
+        assert det["class_name"] == "Class 99"
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +240,18 @@ class TestDetectEndpoint:
             assert "class_name" in det
             assert "confidence" in det
             assert {"x1", "y1", "x2", "y2"} == set(det["box"].keys())
+
+    def test_class_names_unavailable_returns_500(self, client):
+        original = main._class_names
+        try:
+            main._class_names = None
+            resp = client.post("/detect",
+                               data={"image": (io.BytesIO(make_jpeg()), "fish.jpg")},
+                               content_type="multipart/form-data")
+            assert resp.status_code == 500
+            assert "Model not ready" in resp.get_json()["error"]
+        finally:
+            main._class_names = original
 
     def test_response_shape(self, client, mock_session):
         mock_session.run.return_value = [make_onnx_output([
