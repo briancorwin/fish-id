@@ -105,6 +105,16 @@ firebase deploy --only hosting
 
 Terraform provisions all required GCP infrastructure: APIs, service accounts, Workload Identity Federation, Artifact Registry, and the GCS bucket for model storage.
 
+### 0. Authenticate
+
+Terraform uses Application Default Credentials. Before running any Terraform commands, authenticate with your GCP account:
+
+```bash
+gcloud auth application-default login
+```
+
+If you're in a headless environment: `gcloud auth application-default login --no-launch-browser`
+
 ### 1. Apply
 
 ```bash
