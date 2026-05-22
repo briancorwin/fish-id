@@ -2,7 +2,7 @@
 
 ## Project
 
-A web app that accepts an uploaded image, runs a fine-tuned YOLOv8 fish-detection model on CPU, and returns an annotated result. Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
+A web app that accepts an uploaded image, runs a fine-tuned YOLOv8 fish-detection model on CPU, and returns bounding box coordinates for detected fish species. Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 ## Architecture
 
@@ -17,16 +17,18 @@ Full architecture decisions and GCP service mapping are documented in:
 Directories:
 - `app/` — Flask API on Cloud Run; ONNX inference runs directly on CPU, returns bounding box coordinates (not an annotated image)
 - `frontend/` — Static site on Firebase Hosting
+- `terraform/` — GCP infrastructure (APIs, service accounts, Workload Identity, Artifact Registry, GCS bucket)
 - `tests/` — pytest test suite
 
 ## Development Conventions
 
 - Python 3.11+
 - `requirements.txt` lives in `app/`
-- Environment variables (never hardcoded): `GCP_PROJECT`, `GCP_REGION`
+- Environment variables (never hardcoded): `GCP_PROJECT_ID`, `GCP_REGION`
 - Image upload limit: 5MB enforced in both frontend JS and Flask
-- `best.onnx` is not committed to the repo — place it in `app/` before building the container
-- GCP setup steps (APIs, service account, deploy commands) live in `README.md`
+- `best.onnx` is not committed to the repo — for local dev place it in `app/`; for CI/CD it is pulled from GCS at deploy time
+- `terraform/.terraform.lock.hcl` is committed to pin provider versions for reproducible CI runs
+- Infrastructure setup and deployment are documented in `README.md`
 
 ## Cost Guards
 
@@ -37,7 +39,7 @@ Always preserve `--max-instances 1` on Cloud Run. Do not raise this without expl
 Every coding session MUST follow this exact sequence without skipping steps: **create a worktree → make changes → run tests → open a PR**. Never commit directly to `main`.
 
 ### Workflow requirements
-1. **Isolation:** You MUST spawn a sub-agent using Git worktree isolation (`isolation: worktree`) or manually use `git worktree add` for the new feature branch. 
+1. **Isolation:** You MUST spawn a sub-agent using Git worktree isolation (`isolation: worktree`) or manually use `git worktree add` for the new feature branch. When using Claude Code's `isolation: worktree`, the worktree path is managed automatically under `.claude/worktrees/`.
 2. **Environment:** You MUST NEVER use the global Python environment. You MUST create a local virtualenv (`python3 -m venv .venv`) inside the worktree and activate it before installing dependencies or running code.
 3. **Testing:** After implementing the change, you MUST run the test suite using `pytest tests/`. Do not proceed if tests fail.
 4. **Pull Request:** Once tests pass, you MUST use the GitHub CLI (`gh pr create`) to open a pull request. Include a detailed description of the changes.
@@ -58,6 +60,8 @@ Use a descriptive branch name that reflects the work, e.g.:
 - `feature/add-oauth`
 - `fix/null-pointer-login`
 - `chore/upgrade-dependencies`
+
+> When using Claude Code's `isolation: worktree` option, the worktree is created automatically under `.claude/worktrees/` — no manual `git worktree add` needed.
 
 #### 2. Install dependencies (if needed)
 
@@ -152,13 +156,13 @@ git fetch origin --prune
 # Start
 git fetch origin
 git worktree add -b <branch> ../<repo>-<branch> origin/main
-python3 -m venv .venv && source .venv/bin/activate && pip install -r app/requirements.txt
+python3 -m venv .venv && source .venv/bin/activate && pip install -r app/requirements.txt -r tests/requirements.txt
 
 # Work
 git add <specific-files> && git commit -m "..." && git push
 
 # Test
-source .venv/bin/activate && pip install -r tests/requirements.txt && pytest tests/
+source .venv/bin/activate && pytest tests/
 
 # PR
 gh pr create --title "..." --body "..." --base main
