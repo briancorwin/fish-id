@@ -30,7 +30,7 @@ class FishIdentifier:
         raw_output = self._session.run(None, {self._input_name: blob})[0]
         return self._postprocess(raw_output, image.shape, scale, pad_left, pad_top)
 
-    def _load_class_names(self, session) -> dict[int, str] | None:
+    def _load_class_names(self, session) -> dict[int, str]:
         try:
             meta = session.get_modelmeta()
             names_str = meta.custom_metadata_map.get("names", "")
