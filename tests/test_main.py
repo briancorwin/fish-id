@@ -197,3 +197,27 @@ class TestClassNamesEndpoint:
             assert "Model not ready" in resp.get_json()["error"]
         finally:
             main._identifier._class_names = original
+
+    def test_model_load_failure_returns_500_on_detect(self, client):
+        original = main._identifier
+        try:
+            main._identifier = None
+            with patch('main.FishIdentifier', side_effect=RuntimeError("model file missing")):
+                resp = client.post("/detect",
+                                   data={"image": (io.BytesIO(make_jpeg()), "fish.jpg")},
+                                   content_type="multipart/form-data")
+            assert resp.status_code == 500
+            assert "Model not ready" in resp.get_json()["error"]
+        finally:
+            main._identifier = original
+
+    def test_model_load_failure_returns_500_on_class_names(self, client):
+        original = main._identifier
+        try:
+            main._identifier = None
+            with patch('main.FishIdentifier', side_effect=RuntimeError("model file missing")):
+                resp = client.get("/class-names")
+            assert resp.status_code == 500
+            assert "Model not ready" in resp.get_json()["error"]
+        finally:
+            main._identifier = original

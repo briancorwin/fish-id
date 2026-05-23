@@ -40,7 +40,10 @@ def _is_valid_image(data: bytes) -> bool:
 def _load_model():
     global _identifier
     if _identifier is None:
-        _identifier = FishIdentifier(_MODEL_PATH)
+        try:
+            _identifier = FishIdentifier(_MODEL_PATH)
+        except Exception as e:
+            logger.error("Failed to load model: %s", e)
 
 
 @app.route("/health")
@@ -51,7 +54,7 @@ def health():
 @app.route("/class-names", methods=["GET"])
 def class_names():
     _load_model()
-    names = _identifier.getClassNames()
+    names = _identifier.getClassNames() if _identifier is not None else None
     if not names:
         return jsonify({"error": "Model not ready"}), 500
     return jsonify({"class_names": {str(k): v for k, v in names.items()}})
@@ -61,7 +64,7 @@ def class_names():
 @rate_limit
 def detect():
     _load_model()
-    if not _identifier.getClassNames():
+    if _identifier is None or not _identifier.getClassNames():
         return jsonify({"error": "Model not ready"}), 500
 
     file = request.files.get("image")
