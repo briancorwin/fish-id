@@ -54,7 +54,7 @@ def health():
 @app.route("/class-names", methods=["GET"])
 def class_names():
     _load_model()
-    names = _identifier.getClassNames() if _identifier is not None else None
+    names = _identifier.get_class_names() if _identifier is not None else None
     if not names:
         return jsonify({"error": "Model not ready"}), 500
     return jsonify({"class_names": {str(k): v for k, v in names.items()}})
@@ -64,7 +64,7 @@ def class_names():
 @rate_limit
 def detect():
     _load_model()
-    if _identifier is None or not _identifier.getClassNames():
+    if _identifier is None or not _identifier.get_class_names():
         return jsonify({"error": "Model not ready"}), 500
 
     file = request.files.get("image")

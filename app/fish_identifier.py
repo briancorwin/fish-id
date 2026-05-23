@@ -22,7 +22,7 @@ class FishIdentifier:
         self._input_w = input_meta.shape[3]
         self._class_names = self._load_class_names(session)
 
-    def getClassNames(self) -> dict[int, str] | None:
+    def get_class_names(self) -> dict[int, str]:
         return self._class_names
 
     def detect(self, image: np.ndarray) -> list:
