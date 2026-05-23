@@ -1,5 +1,7 @@
 import io
+import cv2
 import pytest
+from unittest.mock import patch
 import main
 from helpers import make_jpeg, make_onnx_output
 
@@ -134,6 +136,22 @@ class TestDetectEndpoint:
         mock_session.run.return_value = [make_onnx_output([
             {"x1": 75, "y1": 75, "x2": 125, "y2": 125, "conf": 0.9, "class_id": 99},
         ])]
+        resp = client.post("/detect",
+                           data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
+                           content_type="multipart/form-data")
+        assert resp.status_code == 500
+        assert "Internal model error" in resp.get_json()["error"]
+
+    def test_cv2_error_in_detect_returns_500(self, client):
+        with patch.object(main._identifier, 'detect', side_effect=cv2.error()):
+            resp = client.post("/detect",
+                               data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
+                               content_type="multipart/form-data")
+        assert resp.status_code == 500
+        assert "Internal model error" in resp.get_json()["error"]
+
+    def test_runtime_error_in_detect_returns_500(self, client, mock_session):
+        mock_session.run.side_effect = RuntimeError("ONNX inference error")
         resp = client.post("/detect",
                            data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
                            content_type="multipart/form-data")

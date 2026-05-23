@@ -42,6 +42,7 @@ def client():
 @pytest.fixture
 def mock_session():
     yield _mock_session
+    _mock_session.run.side_effect = None
     _mock_session.run.reset_mock()
 
 

@@ -86,6 +86,12 @@ def detect():
     except ValueError as e:
         logger.error("Postprocessing failed: %s", e)
         return jsonify({"error": "Internal model error"}), 500
+    except cv2.error as e:
+        logger.error("Image processing failed: %s", e)
+        return jsonify({"error": "Internal model error"}), 500
+    except RuntimeError as e:
+        logger.error("Model inference failed: %s", e)
+        return jsonify({"error": "Internal model error"}), 500
 
     return jsonify({
         "fish_count": len(detections),
