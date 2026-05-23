@@ -5,9 +5,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
-# main.py no longer creates the ONNX session at import time — _load_model() must
-# be called explicitly. Tests inject mock state directly into module globals instead.
 import main
+from fish_identifier import FishIdentifier
 
 _mock_input = MagicMock()
 _mock_input.name = "images"
@@ -22,13 +21,15 @@ _mock_session = MagicMock()
 _mock_session.get_inputs.return_value = [_mock_input]
 _mock_session.get_modelmeta.return_value = _mock_meta
 
-# Inject mock model state — bypasses _load_model() and the real ONNX file entirely.
-main._session = _mock_session
-main._input_name = "images"
-main._input_h = 640
-main._input_w = 640
-main._class_names = {0: "Largemouth Bass", 1: "Bluegill", 2: "Crappie", 3: "Catfish"}
-main._model_ready = True
+# Build a FishIdentifier bypassing __init__ and inject mock state.
+_mock_identifier = object.__new__(FishIdentifier)
+_mock_identifier._session = _mock_session
+_mock_identifier._input_name = "images"
+_mock_identifier._input_h = 640
+_mock_identifier._input_w = 640
+_mock_identifier._class_names = {0: "Largemouth Bass", 1: "Bluegill", 2: "Crappie", 3: "Catfish"}
+
+main._identifier = _mock_identifier
 
 
 @pytest.fixture

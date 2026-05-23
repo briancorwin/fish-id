@@ -316,13 +316,13 @@ class TestDetectEndpoint:
         assert "Internal model error" in resp.get_json()["error"]
 
     def test_class_names_unavailable_returns_500(self, client):
-        original = main._class_names
+        original = main._identifier._class_names
         try:
-            main._class_names = None
+            main._identifier._class_names = None
             resp = client.post("/detect",
                                data={"image": (io.BytesIO(make_jpeg()), "fish.jpg")},
                                content_type="multipart/form-data")
             assert resp.status_code == 500
             assert "Model not ready" in resp.get_json()["error"]
         finally:
-            main._class_names = original
+            main._identifier._class_names = original
