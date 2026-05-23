@@ -52,7 +52,7 @@ def health():
 def class_names():
     _load_model()
     names = _identifier.getClassNames()
-    if names is None:
+    if not names:
         return jsonify({"error": "Model not ready"}), 500
     return jsonify({"class_names": {str(k): v for k, v in names.items()}})
 
@@ -61,7 +61,7 @@ def class_names():
 @rate_limit
 def detect():
     _load_model()
-    if _identifier.getClassNames() is None:
+    if not _identifier.getClassNames():
         return jsonify({"error": "Model not ready"}), 500
 
     file = request.files.get("image")

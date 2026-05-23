@@ -44,9 +44,9 @@ class FishIdentifier:
                 return {int(k): v for k, v in raw.items()}
         except Exception as e:
             logger.error("Failed to load class names from model metadata: %s", e)
-            return None
+            return dict()
         logger.error("Model metadata contains no class names")
-        return None
+        return dict()
 
     def _preprocess(self, image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
         # image:    BGR ndarray (H, W, 3) uint8

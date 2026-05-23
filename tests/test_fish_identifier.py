@@ -43,7 +43,7 @@ class TestLoadClassNames:
         session.get_modelmeta.side_effect = RuntimeError("no metadata")
         with caplog.at_level(logging.ERROR, logger="fish_identifier"):
             result = fi._load_class_names(session)
-        assert result is None
+        assert not result
         assert "Failed to load class names" in caplog.text
 
     def test_returns_none_and_logs_when_names_missing(self, fi, caplog):
@@ -51,7 +51,7 @@ class TestLoadClassNames:
         session.get_modelmeta.return_value.custom_metadata_map = {}
         with caplog.at_level(logging.ERROR, logger="fish_identifier"):
             result = fi._load_class_names(session)
-        assert result is None
+        assert not result
         assert "no class names" in caplog.text
 
 
