@@ -7,20 +7,61 @@ const BOX_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-const dropZone      = document.getElementById('dropZone');
-const fileInput     = document.getElementById('fileInput');
-const canvas        = document.getElementById('canvas');
-const ctx           = canvas.getContext('2d');
-const detectBtn     = document.getElementById('detectBtn');
-const statusEl      = document.getElementById('status');
-const resultsEl     = document.getElementById('results');
-const fishCountEl   = document.getElementById('fishCount');
-const inferenceEl   = document.getElementById('inferenceTime');
-const detectionList = document.getElementById('detectionList');
+const dropZone        = document.getElementById('dropZone');
+const fileInput       = document.getElementById('fileInput');
+const canvas          = document.getElementById('canvas');
+const ctx             = canvas.getContext('2d');
+const detectBtn       = document.getElementById('detectBtn');
+const statusEl        = document.getElementById('status');
+const resultsEl       = document.getElementById('results');
+const fishCountEl     = document.getElementById('fishCount');
+const inferenceEl     = document.getElementById('inferenceTime');
+const detectionList   = document.getElementById('detectionList');
 const canvasContainer = document.getElementById('canvasContainer');
+const appStatusEl     = document.getElementById('appStatus');
+const speciesSection  = document.getElementById('speciesSection');
+const speciesList     = document.getElementById('speciesList');
 
 let currentFile  = null;
 let currentImage = null;
+
+// --- App initialisation ---
+
+async function initApp() {
+  await checkHealth();
+  await loadClassNames();
+}
+
+async function checkHealth() {
+  try {
+    const resp = await fetch(`${API_BASE}/health`);
+    if (resp.ok) {
+      appStatusEl.textContent = 'API online';
+      appStatusEl.className = 'app-status ok';
+    } else {
+      appStatusEl.textContent = 'API unavailable';
+      appStatusEl.className = 'app-status error';
+    }
+  } catch {
+    appStatusEl.textContent = 'API unreachable';
+    appStatusEl.className = 'app-status error';
+  }
+}
+
+async function loadClassNames() {
+  try {
+    const resp = await fetch(`${API_BASE}/class-names`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const names = Object.values(data.class_names);
+    speciesList.innerHTML = names.map(name => `<li>${name}</li>`).join('');
+    speciesSection.hidden = false;
+  } catch {
+    // species list is informational — silently skip on failure
+  }
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
 
 // --- Drag and drop ---
 

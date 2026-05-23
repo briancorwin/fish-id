@@ -36,6 +36,26 @@ header p {
   font-size: 0.95rem;
 }
 
+.app-status {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #4a5568;
+}
+
+.app-status.ok {
+  background: #c6f6d5;
+  color: #276749;
+}
+
+.app-status.error {
+  background: #fed7d7;
+  color: #c53030;
+}
+
 /* Upload zone */
 
 .upload-zone {
@@ -195,4 +215,35 @@ button:disabled {
   height: 10px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+/* Species list */
+
+.species-section {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.species-section h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #2d3748;
+  margin-bottom: 0.6rem;
+}
+
+.species-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.species-list li {
+  font-size: 0.85rem;
+  color: #4a5568;
+  background: #f7fafc;
+  border-radius: 6px;
+  padding: 0.25rem 0.65rem;
 }

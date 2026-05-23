@@ -151,3 +151,31 @@ class TestDetectEndpoint:
             assert "Model not ready" in resp.get_json()["error"]
         finally:
             main._identifier._class_names = original
+
+
+class TestClassNamesEndpoint:
+    def test_returns_all_class_names(self, client):
+        resp = client.get("/class-names")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["class_names"] == {
+            "0": "Largemouth Bass",
+            "1": "Bluegill",
+            "2": "Crappie",
+            "3": "Catfish",
+        }
+
+    def test_keys_are_strings(self, client):
+        resp = client.get("/class-names")
+        for key in resp.get_json()["class_names"]:
+            assert isinstance(key, str)
+
+    def test_model_not_ready_returns_500(self, client):
+        original = main._identifier._class_names
+        try:
+            main._identifier._class_names = None
+            resp = client.get("/class-names")
+            assert resp.status_code == 500
+            assert "Model not ready" in resp.get_json()["error"]
+        finally:
+            main._identifier._class_names = original

@@ -48,6 +48,15 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/class-names", methods=["GET"])
+def class_names():
+    _load_model()
+    names = _identifier.getClassNames()
+    if names is None:
+        return jsonify({"error": "Model not ready"}), 500
+    return jsonify({"class_names": {str(k): v for k, v in names.items()}})
+
+
 @app.route("/detect", methods=["POST"])
 @rate_limit
 def detect():
