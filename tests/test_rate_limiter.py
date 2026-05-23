@@ -45,7 +45,7 @@ class TestRateLimiter:
 
 class TestRateLimitDecorator:
     def test_returns_429_when_limit_exceeded(self, client):
-        from conftest import make_jpeg
+        from helpers import make_jpeg
         img = make_jpeg()
 
         for _ in range(3):
@@ -58,7 +58,7 @@ class TestRateLimitDecorator:
         assert "Rate limit exceeded" in resp.get_json()["error"]
 
     def test_uses_x_forwarded_for_header(self, client, mock_session):
-        from conftest import make_jpeg, make_onnx_output
+        from helpers import make_jpeg, make_onnx_output
         mock_session.run.return_value = [make_onnx_output([])]
         img = make_jpeg()
 
@@ -75,7 +75,7 @@ class TestRateLimitDecorator:
         assert resp.status_code == 429
 
     def test_different_ips_have_independent_limits(self, client, mock_session):
-        from conftest import make_jpeg, make_onnx_output
+        from helpers import make_jpeg, make_onnx_output
         import io
         mock_session.run.return_value = [make_onnx_output([])]
 
