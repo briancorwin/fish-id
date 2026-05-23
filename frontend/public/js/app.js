@@ -54,7 +54,7 @@ async function loadClassNames() {
     if (!resp.ok) return;
     const data = await resp.json();
     const names = Object.values(data.class_names);
-    speciesList.innerHTML = names.map(name => `<li>${name}</li>`).join('');
+    speciesList.innerHTML = names.map(name => `<li>${escapeHtml(name)}</li>`).join('');
     speciesSection.hidden = false;
   } catch {
     // species list is informational — silently skip on failure
@@ -193,7 +193,7 @@ function showResults(count, elapsed, detections) {
     const color = BOX_COLORS[det.class_id % BOX_COLORS.length];
     return `<li>
       <span class="swatch" style="background:${color}"></span>
-      ${det.class_name} — ${Math.round(det.confidence * 100)}%
+      ${escapeHtml(det.class_name)} — ${Math.round(det.confidence * 100)}%
     </li>`;
   }).join('');
 
@@ -201,6 +201,15 @@ function showResults(count, elapsed, detections) {
 }
 
 // --- Helpers ---
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function showStatus(msg) {
   statusEl.textContent = msg;
