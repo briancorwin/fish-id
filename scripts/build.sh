@@ -2,7 +2,7 @@
 set -e
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: scripts/build.sh <path-to-best.onnx> <gcp-project> [region]"
+  echo "Usage: scripts/build.sh <path-to-fish-id.onnx> <gcp-project> [region]"
   exit 1
 fi
 
@@ -17,7 +17,7 @@ fi
 
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/fish-id/fish-id"
 
-cp "$MODEL_PATH" app/best.onnx
-trap 'rm -f app/best.onnx' EXIT
+cp "$MODEL_PATH" app/fish-id.onnx
+trap 'rm -f app/fish-id.onnx' EXIT
 
 gcloud builds submit app/ --tag "$IMAGE" --project "$PROJECT"

@@ -24,7 +24,7 @@ _IMAGE_MAGIC = [
     (b"RIFF", b"WEBP"),            # WEBP
 ]
 
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "best.onnx")
+_MODEL_PATH = os.path.join(os.path.dirname(__file__), "fish-id.onnx")
 _identifier: FishIdentifier | None = None
 
 

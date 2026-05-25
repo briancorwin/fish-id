@@ -26,7 +26,7 @@ Directories:
 - `requirements.txt` lives in `app/`
 - Environment variables (never hardcoded): `GCP_PROJECT_ID`, `GCP_REGION`
 - Image upload limit: 5MB enforced in both frontend JS and Flask
-- `best.onnx` is not committed to the repo — for local dev place it in `app/`; for CI/CD it is pulled from GCS at deploy time
+- `fish-id.onnx` is not committed to the repo — for local dev place it in `app/`; for CI/CD it is pulled from GCS at deploy time
 - `terraform/.terraform.lock.hcl` is committed to pin provider versions for reproducible CI runs
 - Infrastructure setup and deployment are documented in `README.md`
 

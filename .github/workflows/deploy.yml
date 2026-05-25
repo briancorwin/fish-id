@@ -28,7 +28,7 @@ jobs:
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
       - name: Download model from GCS
-        run: gsutil cp ${{ secrets.ONNX_MODEL_GCS_URI }} app/best.onnx
+        run: gsutil cp ${{ secrets.ONNX_MODEL_GCS_URI }} app/fish-id.onnx
 
       - name: Build and push Docker image
         run: |
