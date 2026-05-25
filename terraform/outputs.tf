@@ -9,7 +9,7 @@ output "cicd_service_account_email" {
 }
 
 output "model_bucket_name" {
-  description = "Upload best.onnx here, then set ONNX_MODEL_GCS_URI=gs://BUCKET/best.onnx in GitHub secrets"
+  description = "Upload fish-id.onnx here, then set ONNX_MODEL_GCS_URI=gs://BUCKET/fish-id.onnx in GitHub secrets"
   value       = google_storage_bucket.models.name
 }
 

@@ -43,7 +43,7 @@ fish-id/
 │       ├── ci.yml              # tests + lint on every PR
 │       └── deploy.yml          # backend + frontend deploy on merge to main
 ├── scripts/
-│   └── build.sh                # manual CLI build: copies best.onnx into app/, builds container, cleans up
+│   └── build.sh                # manual CLI build: copies fish-id.onnx into app/, builds container, cleans up
 ├── tests/
 │   ├── conftest.py
 │   ├── requirements.txt
@@ -52,7 +52,7 @@ fish-id/
 └── README.md
 ```
 
-`best.onnx` is not committed to the repo. In production it is stored in GCS and downloaded during CI/CD. For local builds, place it in `app/` before running `scripts/build.sh`.
+`fish-id.onnx` is not committed to the repo. In production it is stored in GCS and downloaded during CI/CD. For local builds, place it in `app/` before running `scripts/build.sh`.
 
 ---
 
@@ -93,7 +93,7 @@ Image validation on upload:
 
 - YOLOv8n fine-tuned on a specialized fish dataset created using Roboflow
 - Exported to ONNX for CPU inference (~300–600ms on Cloud Run 2 vCPU)
-- When deployed via GitHub Actions, `best.onnx` is downloaded from GCS (`PROJECT_ID-fish-id-models` bucket) during the workflow. When deploying manually via CLI, `scripts/build.sh` expects a local copy of `best.onnx` passed as an argument.
+- When deployed via GitHub Actions, `fish-id.onnx` is downloaded from GCS (`PROJECT_ID-fish-id-models` bucket) during the workflow. When deploying manually via CLI, `scripts/build.sh` expects a local copy of `fish-id.onnx` passed as an argument.
 
 ### Rate Limiting
 
@@ -118,7 +118,7 @@ GitHub Actions handles all deploys on merge to `main`. Manual CLI deployment via
 
 Two jobs run sequentially on every merged PR:
 
-1. **`deploy-api`** — downloads `best.onnx` from GCS into `app/`, builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run
+1. **`deploy-api`** — downloads `fish-id.onnx` from GCS into `app/`, builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run
 2. **`deploy-frontend`** — fetches the Cloud Run URL, injects it into `app.js`, deploys `frontend/` to Firebase Hosting
 
 Both jobs authenticate using **Workload Identity Federation** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
@@ -131,7 +131,7 @@ Both jobs authenticate using **Workload Identity Federation** — no long-lived 
 | `GCP_REGION` | Cloud Run / Artifact Registry region |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from `terraform output workload_identity_provider` |
 | `GCP_SERVICE_ACCOUNT` | Output from `terraform output cicd_service_account_email` |
-| `ONNX_MODEL_GCS_URI` | `gs://PROJECT_ID-fish-id-models/best.onnx` |
+| `ONNX_MODEL_GCS_URI` | `gs://PROJECT_ID-fish-id-models/fish-id.onnx` |
 
 ---
 

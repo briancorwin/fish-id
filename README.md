@@ -20,7 +20,7 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 | Tool | Purpose |
 |------|---------|
-| `gsutil` | Upload `best.onnx` to GCS for the GitHub Actions CI/CD path (bundled with `gcloud`) |
+| `gsutil` | Upload `fish-id.onnx` to GCS for the GitHub Actions CI/CD path (bundled with `gcloud`) |
 | [`gh`](https://cli.github.com) | Manage GitHub Actions secrets and open PRs from the CLI |
 
 ---
@@ -28,7 +28,7 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 ## Prerequisites
 
 - `gcloud`, `firebase`, and `terraform` installed and authenticated (see [CLI Tools](#cli-tools) above)
-- A trained `best.onnx` model file
+- A trained `fish-id.onnx` model file
 
 ---
 
@@ -68,10 +68,10 @@ gcloud iam service-accounts create fish-id-cloud-run-sa \
 
 ### API (Cloud Run)
 
-`scripts/build.sh` takes the path to your `best.onnx`, your GCP project ID, and an optional region (default: `us-central1`). It copies the model into `app/` for the build, then removes it.
+`scripts/build.sh` takes the path to your `fish-id.onnx`, your GCP project ID, and an optional region (default: `us-central1`). It copies the model into `app/` for the build, then removes it.
 
 ```bash
-scripts/build.sh /path/to/best.onnx ${GCP_PROJECT_ID} [${GCP_REGION}]
+scripts/build.sh /path/to/fish-id.onnx ${GCP_PROJECT_ID} [${GCP_REGION}]
 ```
 
 This submits the build to Cloud Build, which builds the image and pushes it to Artifact Registry:
@@ -172,7 +172,7 @@ On every PR merged to `main`, two jobs run in sequence: `deploy-api` (Cloud Run)
 ### 1. Upload the model to GCS
 
 ```bash
-gsutil cp /path/to/best.onnx gs://$(terraform -chdir=terraform output -raw model_bucket_name)/best.onnx
+gsutil cp /path/to/fish-id.onnx gs://$(terraform -chdir=terraform output -raw model_bucket_name)/fish-id.onnx
 ```
 
 ### 2. Set GitHub Actions secrets
@@ -185,7 +185,7 @@ Navigate to **Settings → Secrets and variables → Actions** in the GitHub rep
 | `GCP_REGION` | Region used during Terraform apply (e.g. `us-central1`) |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of `terraform output workload_identity_provider` |
 | `GCP_SERVICE_ACCOUNT` | Output of `terraform output cicd_service_account_email` |
-| `ONNX_MODEL_GCS_URI` | `gs://${BUCKET_NAME}/best.onnx` (bucket from `terraform output model_bucket_name`) |
+| `ONNX_MODEL_GCS_URI` | `gs://${BUCKET_NAME}/fish-id.onnx` (bucket from `terraform output model_bucket_name`) |
 
 ### 3. Deploy
 
@@ -207,7 +207,7 @@ pip install -r app/requirements.txt -r tests/requirements.txt
 
 ### Running the API
 
-Place `best.onnx` in `app/` before starting — the app loads it at startup and will crash without it.
+Place `fish-id.onnx` in `app/` before starting — the app loads it at startup and will crash without it.
 
 ```bash
 source .venv/bin/activate
