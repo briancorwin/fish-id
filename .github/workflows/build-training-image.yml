@@ -1,0 +1,53 @@
+name: Build training container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "training/**"
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+
+jobs:
+  build-and-push:
+    name: Build & Push training image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build training image
+        run: |
+          docker build \
+            -f training/Dockerfile \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }} \
+            .
+
+      - name: Push training image
+        run: |
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}
+
+      - name: Write training-image-latest.json to GCS
+        run: |
+          echo '{"image":"${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}","sha":"${{ github.sha }}","built_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' > /tmp/training-image-latest.json
+          gsutil cp /tmp/training-image-latest.json gs://${{ env.GCP_PROJECT_ID }}-fish-id-models/training-image-latest.json
