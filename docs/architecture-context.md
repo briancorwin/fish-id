@@ -618,12 +618,7 @@ The existing "Cost Controls" table is for serving. The pipeline introduces a new
 
 ## Security
 
-- **Workload Identity Federation** — no long-lived service account keys; short-lived tokens are scoped to the specific repo and restricted to the `main` branch, so feature branches cannot impersonate the CI/CD service account
-- **Cloud Run service account** — assigned no IAM roles. The app makes no GCP API calls, so no permissions are needed. This limits blast radius if the app is ever exploited.
-- **Image validation** — magic bytes checked server-side to reject non-image payloads regardless of Content-Type header
-- **CORS** — restricted to the Firebase Hosting origin (`https://PROJECT_ID.web.app`)
-- **Rate limiting** — per-IP token bucket prevents a single caller from running up inference costs
-- **No secrets** — no API keys or credentials in this architecture; nothing to leak
+See **[docs/security.md](security.md)** for the full security reference, including GitHub repository security settings (secret scanning, Dependabot, CodeQL), CI security jobs, CI/CD authentication, runtime controls, and training pipeline IAM.
 
 ---
 

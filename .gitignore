@@ -236,3 +236,6 @@ terraform/*_override.tf.json
 frontend/.firebase/
 frontend/firebase-debug.log
 frontend/.runtimeconfig.json
+
+# Claude Code
+.claude/
