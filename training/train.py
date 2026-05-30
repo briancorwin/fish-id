@@ -40,17 +40,18 @@ def _download_dataset(storage_client, training_bucket, manifest):
         blob = bucket.blob(f"images/val/{filename}")
         blob.download_to_filename(str(dest))
 
-    # Labels mirror the same filenames with .txt extension under labels/
-    for filename in manifest.get("train_label_files", []):
-        dest = Path(f"/tmp/dataset/labels/train/{filename}")
+    for filename in manifest["train_files"]:
+        label_file = Path(filename).stem + ".txt"
+        dest = Path(f"/tmp/dataset/labels/train/{label_file}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        blob = bucket.blob(f"labels/train/{filename}")
+        blob = bucket.blob(f"labels/train/{label_file}")
         blob.download_to_filename(str(dest))
 
-    for filename in manifest.get("val_label_files", []):
-        dest = Path(f"/tmp/dataset/labels/val/{filename}")
+    for filename in manifest["val_files"]:
+        label_file = Path(filename).stem + ".txt"
+        dest = Path(f"/tmp/dataset/labels/val/{label_file}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        blob = bucket.blob(f"labels/val/{filename}")
+        blob = bucket.blob(f"labels/val/{label_file}")
         blob.download_to_filename(str(dest))
 
 

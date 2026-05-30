@@ -228,11 +228,10 @@ class TestGCSDownloadLogic:
         with patch("pathlib.Path.mkdir"):
             train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
 
-        # Should have been called once per image file (train + val = 2)
-        assert mock_blob.download_to_filename.call_count == 2
+        # 2 image files + 2 label files derived from image filenames
+        assert mock_blob.download_to_filename.call_count == 4
 
-    def test_no_extra_blobs_downloaded(self):
-        """Only the files listed in the manifest are downloaded (no extras)."""
+    def test_label_files_derived_from_image_filenames(self):
         small_manifest = {
             "train_files": ["img001.jpg"],
             "val_files": ["img002.jpg"],
@@ -249,8 +248,28 @@ class TestGCSDownloadLogic:
             train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
 
         blob_calls = [c.args[0] for c in mock_bucket.blob.call_args_list]
-        # Only train and val image blobs — no label blobs since manifest has no label_files
-        assert len(blob_calls) == 2
+        assert "labels/train/img001.txt" in blob_calls
+        assert "labels/val/img002.txt" in blob_calls
+
+    def test_no_extra_blobs_downloaded(self):
+        """Exactly 4 blobs per 2-image manifest: 2 images + 2 derived label files."""
+        small_manifest = {
+            "train_files": ["img001.jpg"],
+            "val_files": ["img002.jpg"],
+            "class_names": ["Bass"],
+        }
+
+        mock_blob = MagicMock()
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        with patch("pathlib.Path.mkdir"):
+            train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
+
+        blob_calls = [c.args[0] for c in mock_bucket.blob.call_args_list]
+        assert len(blob_calls) == 4
 
     def test_correct_bucket_used(self):
         small_manifest = {
