@@ -3,6 +3,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Training run ID for Cloud Run revision tagging (optional)'
+        required: false
+        type: string
 
 jobs:
   deploy-api:
@@ -36,7 +42,13 @@ jobs:
           docker push ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/fish-id:${{ github.sha }}
 
       - name: Deploy to Cloud Run
+        env:
+          RUN_ID: ${{ inputs.run_id }}
         run: |
+          REVISION_SUFFIX_FLAG=""
+          if [ -n "$RUN_ID" ]; then
+            REVISION_SUFFIX_FLAG="--revision-suffix=$RUN_ID"
+          fi
           gcloud run deploy fish-id \
             --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/fish-id:${{ github.sha }} \
             --region ${{ secrets.GCP_REGION }} \
@@ -46,7 +58,8 @@ jobs:
             --max-instances 1 \
             --service-account fish-id-cloud-run-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
             --set-env-vars CORS_ORIGIN=https://${{ secrets.GCP_PROJECT_ID }}.web.app \
-            --allow-unauthenticated
+            --allow-unauthenticated \
+            $REVISION_SUFFIX_FLAG
 
   deploy-frontend:
     name: Deploy Firebase Hosting
