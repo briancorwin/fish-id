@@ -39,10 +39,11 @@ def _download_eval_files(storage_client, training_bucket, manifest):
         blob = bucket.blob(f"eval/images/{filename}")
         blob.download_to_filename(str(dest))
 
-    for filename in manifest.get("label_files", []):
-        dest = Path(f"/tmp/eval/labels/{filename}")
+    for filename in image_files:
+        label_file = Path(filename).stem + ".txt"
+        dest = Path(f"/tmp/eval/labels/{label_file}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        blob = bucket.blob(f"eval/labels/{filename}")
+        blob = bucket.blob(f"eval/labels/{label_file}")
         blob.download_to_filename(str(dest))
 
     return image_files

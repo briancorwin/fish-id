@@ -34,7 +34,6 @@ import eval as eval_module
 
 EVAL_MANIFEST_FIXTURE = {
     "eval_files": ["fish001.jpg", "fish002.jpg"],
-    "label_files": ["fish001.txt", "fish002.txt"],
     "class_names": ["Bass", "Bluegill"],
 }
 
@@ -122,6 +121,20 @@ class TestEvalSetDownload:
         assert "eval/images/fish002.jpg" in blob_calls
 
     def test_label_files_downloaded_to_correct_paths(self):
+        mock_blob = MagicMock()
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_client = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+
+        with patch("pathlib.Path.mkdir"):
+            eval_module._download_eval_files(mock_client, "my-training-bucket", EVAL_MANIFEST_FIXTURE)
+
+        blob_calls = [c.args[0] for c in mock_bucket.blob.call_args_list]
+        assert "eval/labels/fish001.txt" in blob_calls
+        assert "eval/labels/fish002.txt" in blob_calls
+
+    def test_label_files_derived_from_image_filenames(self):
         mock_blob = MagicMock()
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value = mock_blob
