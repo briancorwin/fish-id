@@ -7,12 +7,12 @@ main:
     # -------------------------------------------------------------------------
     - init:
         assign:
-          - project_id: ${args.data.bucket.split("-fish-id-")[0]}
+          - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: "us-central1"
           - gcs_object: ${args.data.name}
           - dataset_version: ${text.split(gcs_object, "/")[1]}
-          - now_str: ${text.substring(string(sys.now()), 0, 19)}
-          - run_id: ${"run-" + text.replace_all(text.replace_all(text.replace_all(now_str, "T", "-"), ":", ""), " ", "-")}
+          - now_str: ${text.substring(time.format(sys.now()), 0, 19)}
+          - run_id: ${"run-" + text.replace_all(text.replace_all(now_str, "T", "-"), ":", "")}
           - training_bucket: ${project_id + "-fish-id-training"}
           - model_bucket: ${project_id + "-fish-id-models"}
           - vertex_experiment: "fish-id-eval"
@@ -21,7 +21,7 @@ main:
     - read_training_image:
         call: http.get
         args:
-          url: ${"https://storage.googleapis.com/storage/v1/b/" + training_bucket + "/o/training-image-latest.json?alt=media"}
+          url: ${"https://storage.googleapis.com/storage/v1/b/" + training_bucket + "/o/versions%2F" + dataset_version + "%2Fmanifest.json?alt=media"}
           auth:
             type: OAuth2
         result: training_image_response
