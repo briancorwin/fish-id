@@ -16,3 +16,16 @@ resource "google_storage_bucket_iam_member" "cicd_model_reader" {
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
+
+# Training data bucket — stores image pool, label pool, versioned manifests, and eval set
+resource "google_storage_bucket" "training" {
+  name                        = "${var.project_id}-fish-id-training"
+  location                    = var.region
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  depends_on = [google_project_service.apis["storage.googleapis.com"]]
+}
