@@ -1,6 +1,0 @@
-model: yolov8m.pt
-epochs: 75
-imgsz: 640
-batch: 8
-optimizer: AdamW
-lr0: 0.001

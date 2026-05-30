@@ -158,22 +158,7 @@ class TestConfigLoading:
             cfg = yaml.safe_load(f)
         assert cfg["batch"] == 16
 
-    def test_c2_model(self):
-        with open(self.CONFIGS_DIR / "c2.yaml") as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["model"] == "yolov8m.pt"
-
-    def test_c2_epochs(self):
-        with open(self.CONFIGS_DIR / "c2.yaml") as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["epochs"] == 75
-
-    def test_c2_batch(self):
-        with open(self.CONFIGS_DIR / "c2.yaml") as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["batch"] == 8
-
-    @pytest.mark.parametrize("version", ["c1", "c2"])
+    @pytest.mark.parametrize("version", ["c1"])
     def test_all_required_keys_present(self, version):
         with open(self.CONFIGS_DIR / f"{version}.yaml") as f:
             cfg = yaml.safe_load(f)
