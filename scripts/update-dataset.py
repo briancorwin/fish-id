@@ -89,7 +89,7 @@ def main() -> None:
     project_name = os.environ.get("ROBOFLOW_PROJECT")
     for var, val in [("ROBOFLOW_API_KEY", api_key), ("ROBOFLOW_WORKSPACE", workspace), ("ROBOFLOW_PROJECT", project_name)]:
         if not val:
-            print(f"ERROR: {var} environment variable is not set.", file=sys.stderr)
+            print("ERROR: Required Roboflow configuration is missing.", file=sys.stderr)
             sys.exit(1)
 
     try:
