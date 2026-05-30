@@ -16,7 +16,8 @@ main:
           - training_bucket: ${project_id + "-fish-id-training"}
           - model_bucket: ${project_id + "-fish-id-models"}
           - vertex_experiment: "fish-id-eval"
-          - config_version: "c2"
+          - config_version: "1"
+          - machine_type: "n1-highmem-4"
 
     - read_training_image:
         call: http.get
@@ -67,6 +68,10 @@ main:
                         value: ${region}
                       - name: "VERTEX_EXPERIMENT"
                         value: ${vertex_experiment}
+                      - name: "CONTAINER_IMAGE"
+                        value: ${training_image}
+                      - name: "MACHINE_TYPE"
+                        value: ${machine_type}
               scheduling:
                 timeout: "7200s"
               serviceAccount: ${"fish-id-training-sa@" + project_id + ".iam.gserviceaccount.com"}
@@ -170,6 +175,10 @@ main:
                         value: ${region}
                       - name: "VERTEX_EXPERIMENT"
                         value: ${vertex_experiment}
+                      - name: "CONTAINER_IMAGE"
+                        value: ${training_image}
+                      - name: "MACHINE_TYPE"
+                        value: ${machine_type}
               scheduling:
                 timeout: "7200s"
               serviceAccount: ${"fish-id-training-sa@" + project_id + ".iam.gserviceaccount.com"}
