@@ -1,33 +1,31 @@
-"""Training script for fish-detection YOLOv8 model.
-
-Reads env vars: JOB_MODE, RUN_ID, DATASET_VERSION, CONFIG_VERSION,
-                TRAINING_BUCKET, MODEL_BUCKET, GCP_PROJECT_ID, GCP_REGION,
-                CONTAINER_IMAGE, MACHINE_TYPE
-"""
-
 import json
+import logging
 import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import google.cloud.storage as gcs
 import yaml
+from ultralytics import YOLO
+
+_logger = logging.getLogger(__name__)
 
 
-def load_config(config_version):
+def _load_config(config_version):
     config_path = f"/app/configs/c{config_version}.yaml"
     with open(config_path) as f:
         return yaml.safe_load(f)
 
 
-def download_manifest(storage_client, training_bucket, dataset_version):
+def _download_manifest(storage_client, training_bucket, dataset_version):
     bucket = storage_client.bucket(training_bucket)
     blob = bucket.blob(f"versions/{dataset_version}/manifest.json")
     data = blob.download_as_bytes()
     return json.loads(data)
 
 
-def download_dataset(storage_client, training_bucket, manifest):
+def _download_dataset(storage_client, training_bucket, manifest):
     bucket = storage_client.bucket(training_bucket)
 
     for filename in manifest["train_files"]:
@@ -56,7 +54,7 @@ def download_dataset(storage_client, training_bucket, manifest):
         blob.download_to_filename(str(dest))
 
 
-def write_data_yaml(class_names):
+def _write_data_yaml(class_names):
     data_yaml = {
         "path": "/tmp/dataset",
         "train": "images/train",
@@ -69,8 +67,7 @@ def write_data_yaml(class_names):
         yaml.dump(data_yaml, f)
 
 
-def train_model(config):
-    from ultralytics import YOLO
+def _train_model(config):
     results = YOLO(config["model"]).train(
         data="/tmp/dataset/data.yaml",
         epochs=config["epochs"],
@@ -82,8 +79,7 @@ def train_model(config):
     return results
 
 
-def export_onnx(results):
-    from ultralytics import YOLO
+def _export_onnx(results):
     best_pt = str(results.save_dir / "weights/best.pt")
     best_model = YOLO(best_pt)
     best_model.export(format="onnx")
@@ -92,7 +88,7 @@ def export_onnx(results):
     return onnx_path
 
 
-def build_metadata(run_id, dataset_version, config_version, config, results, duration_seconds):
+def _build_metadata(run_id, dataset_version, config_version, config, results, duration_seconds):
     return {
         "run_id": run_id,
         "dataset_version": dataset_version,
@@ -118,15 +114,13 @@ def build_metadata(run_id, dataset_version, config_version, config, results, dur
     }
 
 
-def upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata):
+def _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata):
     bucket = storage_client.bucket(model_bucket)
 
-    # Upload ONNX model
     onnx_dest = f"runs/{run_id}/fish-id.onnx"
     blob = bucket.blob(onnx_dest)
     blob.upload_from_filename(onnx_path)
 
-    # Write and upload metadata
     metadata_local = "/tmp/metadata.json"
     with open(metadata_local, "w") as f:
         json.dump(metadata, f, indent=2)
@@ -137,7 +131,7 @@ def upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata):
 
 
 def main():
-    import google.cloud.storage as gcs
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     run_id = os.environ["RUN_ID"]
     dataset_version = os.environ["DATASET_VERSION"]
@@ -145,28 +139,28 @@ def main():
     training_bucket = os.environ["TRAINING_BUCKET"]
     model_bucket = os.environ["MODEL_BUCKET"]
 
-    print(f"[train] run_id={run_id} dataset_version={dataset_version} config_version={config_version}")
+    _logger.info(f"[train] run_id={run_id} dataset_version={dataset_version} config_version={config_version}")
 
-    config = load_config(config_version)
-    print(f"[train] config loaded: {config}")
+    config = _load_config(config_version)
+    _logger.info(f"[train] config loaded: {config}")
 
     storage_client = gcs.Client()
 
-    manifest = download_manifest(storage_client, training_bucket, dataset_version)
-    print(f"[train] manifest: {len(manifest['train_files'])} train, {len(manifest['val_files'])} val files")
+    manifest = _download_manifest(storage_client, training_bucket, dataset_version)
+    _logger.info(f"[train] manifest: {len(manifest['train_files'])} train, {len(manifest['val_files'])} val files")
 
-    download_dataset(storage_client, training_bucket, manifest)
-    write_data_yaml(manifest["class_names"])
+    _download_dataset(storage_client, training_bucket, manifest)
+    _write_data_yaml(manifest["class_names"])
 
     start = time.time()
-    results = train_model(config)
+    results = _train_model(config)
     duration = time.time() - start
 
-    onnx_path = export_onnx(results)
-    metadata = build_metadata(run_id, dataset_version, config_version, config, results, duration)
-    upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)
+    onnx_path = _export_onnx(results)
+    metadata = _build_metadata(run_id, dataset_version, config_version, config, results, duration)
+    _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)
 
-    print(f"[train] done. artifacts uploaded to gs://{model_bucket}/runs/{run_id}/")
+    _logger.info(f"[train] done. artifacts uploaded to gs://{model_bucket}/runs/{run_id}/")
 
 
 if __name__ == "__main__":

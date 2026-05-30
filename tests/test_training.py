@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import call, patch
 
 import pytest
 import yaml
@@ -16,6 +16,18 @@ import yaml
 # Add training/ to sys.path so we can import train and eval as modules
 TRAINING_DIR = Path(__file__).parent.parent / "training"
 sys.path.insert(0, str(TRAINING_DIR))
+
+# Stub heavy deps that are not installed in the test environment
+from unittest.mock import MagicMock  # noqa: E402 (must precede training imports)
+import google as _google_pkg
+if not hasattr(_google_pkg, "cloud"):
+    _gc_mock = MagicMock()
+    _google_pkg.cloud = _gc_mock
+    sys.modules["google.cloud"] = _gc_mock
+    sys.modules["google.cloud.storage"] = MagicMock()
+    sys.modules["google.cloud.aiplatform"] = MagicMock()
+if "ultralytics" not in sys.modules:
+    sys.modules["ultralytics"] = MagicMock()
 
 import train as train_module
 import eval as eval_module
@@ -59,7 +71,7 @@ class TestManifestParsing:
         manifest_bytes = json.dumps(MANIFEST_FIXTURE).encode()
         mock_client, _, _ = _make_gcs_client(manifest_bytes)
 
-        result = train_module.download_manifest(mock_client, "my-training-bucket", "v3")
+        result = train_module._download_manifest(mock_client, "my-training-bucket", "v3")
 
         assert result["train_files"] == ["a.jpg", "b.jpg"]
         assert result["val_files"] == ["c.jpg"]
@@ -68,7 +80,7 @@ class TestManifestParsing:
         manifest_bytes = json.dumps(MANIFEST_FIXTURE).encode()
         mock_client, _, _ = _make_gcs_client(manifest_bytes)
 
-        result = train_module.download_manifest(mock_client, "my-training-bucket", "v3")
+        result = train_module._download_manifest(mock_client, "my-training-bucket", "v3")
 
         assert result["class_names"] == ["Bass", "Bluegill"]
 
@@ -103,7 +115,7 @@ class TestManifestParsing:
                 mock_open.side_effect = fake_open
 
                 with patch("pathlib.Path.mkdir"):
-                    train_module.write_data_yaml(MANIFEST_FIXTURE["class_names"])
+                    train_module._write_data_yaml(MANIFEST_FIXTURE["class_names"])
 
         # data.yaml must contain class names
         if captured.get("content"):
@@ -116,7 +128,7 @@ class TestManifestParsing:
         manifest_bytes = json.dumps(MANIFEST_FIXTURE).encode()
         mock_client, mock_bucket, _ = _make_gcs_client(manifest_bytes)
 
-        train_module.download_manifest(mock_client, "my-training-bucket", "v3")
+        train_module._download_manifest(mock_client, "my-training-bucket", "v3")
 
         mock_client.bucket.assert_called_once_with("my-training-bucket")
         mock_bucket.blob.assert_called_once_with("versions/v3/manifest.json")
@@ -171,7 +183,7 @@ class TestConfigLoading:
         )
 
     def test_load_config_function_c1(self):
-        """train_module.load_config reads from /app/configs/ path."""
+        """train_module._load_config reads from /app/configs/ path."""
         with patch("builtins.open", create=True) as mock_open:
             import io
             mock_open.return_value.__enter__ = lambda s: io.StringIO(
@@ -179,7 +191,7 @@ class TestConfigLoading:
             )
             mock_open.return_value.__exit__ = MagicMock(return_value=False)
 
-            cfg = train_module.load_config("1")
+            cfg = train_module._load_config("1")
 
         mock_open.assert_called_once_with("/app/configs/c1.yaml")
         assert cfg["model"] == "yolov8n.pt"
@@ -207,7 +219,7 @@ class TestGCSDownloadLogic:
         mock_client.bucket.return_value = mock_bucket
 
         with patch("pathlib.Path.mkdir"):
-            train_module.download_dataset(mock_client, "my-training-bucket", small_manifest)
+            train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
 
         # Collect all blob() calls
         blob_calls = [c.args[0] for c in mock_bucket.blob.call_args_list]
@@ -229,7 +241,7 @@ class TestGCSDownloadLogic:
         mock_client.bucket.return_value = mock_bucket
 
         with patch("pathlib.Path.mkdir"):
-            train_module.download_dataset(mock_client, "my-training-bucket", small_manifest)
+            train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
 
         # Should have been called once per image file (train + val = 2)
         assert mock_blob.download_to_filename.call_count == 2
@@ -249,7 +261,7 @@ class TestGCSDownloadLogic:
         mock_client.bucket.return_value = mock_bucket
 
         with patch("pathlib.Path.mkdir"):
-            train_module.download_dataset(mock_client, "my-training-bucket", small_manifest)
+            train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
 
         blob_calls = [c.args[0] for c in mock_bucket.blob.call_args_list]
         # Only train and val image blobs — no label blobs since manifest has no label_files
@@ -269,7 +281,7 @@ class TestGCSDownloadLogic:
         mock_client.bucket.return_value = mock_bucket
 
         with patch("pathlib.Path.mkdir"):
-            train_module.download_dataset(mock_client, "my-training-bucket", small_manifest)
+            train_module._download_dataset(mock_client, "my-training-bucket", small_manifest)
 
         mock_client.bucket.assert_called_with("my-training-bucket")
 
@@ -299,7 +311,7 @@ class TestArtifactUpload:
         config = {"model": "yolov8n.pt", "epochs": 50, "imgsz": 640, "batch": 16,
                   "optimizer": "SGD", "lr0": 0.01}
 
-        metadata = train_module.build_metadata(
+        metadata = train_module._build_metadata(
             "run-001", "v3", "1", config, mock_results, 120.0
         )
 
@@ -312,7 +324,7 @@ class TestArtifactUpload:
             mock_open.return_value.__enter__ = lambda s: io.StringIO()
             mock_open.return_value.__exit__ = MagicMock(return_value=False)
 
-            train_module.upload_artifacts(
+            train_module._upload_artifacts(
                 mock_client, "my-model-bucket", "run-001", str(fake_onnx), metadata
             )
 
@@ -332,7 +344,7 @@ class TestArtifactUpload:
         config = {"model": "yolov8n.pt", "epochs": 50, "imgsz": 640, "batch": 16,
                   "optimizer": "SGD", "lr0": 0.01}
 
-        metadata = train_module.build_metadata(
+        metadata = train_module._build_metadata(
             "run-001", "v3", "1", config, mock_results, 120.0
         )
 
@@ -344,7 +356,7 @@ class TestArtifactUpload:
             mock_open.return_value.__enter__ = lambda s: io.StringIO()
             mock_open.return_value.__exit__ = MagicMock(return_value=False)
 
-            train_module.upload_artifacts(
+            train_module._upload_artifacts(
                 mock_client, "my-model-bucket", "run-001", str(fake_onnx), metadata
             )
 
@@ -355,7 +367,7 @@ class TestArtifactUpload:
         config = {"model": "yolov8n.pt", "epochs": 50, "imgsz": 640, "batch": 16,
                   "optimizer": "SGD", "lr0": 0.01}
 
-        metadata = train_module.build_metadata(
+        metadata = train_module._build_metadata(
             "run-abc", "v5", "2", config, mock_results, 300.0
         )
 
@@ -379,7 +391,7 @@ class TestArtifactUpload:
         mock_results = self._make_mock_results()
         config = {"model": "yolov8n.pt", "epochs": 50, "imgsz": 640, "batch": 16,
                   "optimizer": "SGD", "lr0": 0.01}
-        metadata = train_module.build_metadata(
+        metadata = train_module._build_metadata(
             "run-001", "v3", "1", config, mock_results, 60.0
         )
 
@@ -391,7 +403,7 @@ class TestArtifactUpload:
             mock_open.return_value.__enter__ = lambda s: io.StringIO()
             mock_open.return_value.__exit__ = MagicMock(return_value=False)
 
-            train_module.upload_artifacts(
+            train_module._upload_artifacts(
                 mock_client, "my-model-bucket", "run-001", str(fake_onnx), metadata
             )
 

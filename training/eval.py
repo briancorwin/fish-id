@@ -1,18 +1,18 @@
-"""Evaluation script for fish-detection YOLOv8 model.
-
-Reads env vars: JOB_MODE, RUN_ID, TRAINING_BUCKET, MODEL_BUCKET,
-                GCP_PROJECT_ID, GCP_REGION, VERTEX_EXPERIMENT
-"""
-
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import google.cloud.storage as gcs
 import yaml
+from google.cloud import aiplatform
+from ultralytics import YOLO
+
+_logger = logging.getLogger(__name__)
 
 
-def download_eval_current(storage_client, training_bucket):
+def _download_eval_current(storage_client, training_bucket):
     bucket = storage_client.bucket(training_bucket)
     blob = bucket.blob("eval/current.json")
     data = blob.download_as_bytes()
@@ -20,14 +20,14 @@ def download_eval_current(storage_client, training_bucket):
     return current["eval_version"]
 
 
-def download_eval_manifest(storage_client, training_bucket, eval_version):
+def _download_eval_manifest(storage_client, training_bucket, eval_version):
     bucket = storage_client.bucket(training_bucket)
     blob = bucket.blob(f"eval/versions/{eval_version}/manifest.json")
     data = blob.download_as_bytes()
     return json.loads(data)
 
 
-def download_eval_files(storage_client, training_bucket, manifest):
+def _download_eval_files(storage_client, training_bucket, manifest):
     bucket = storage_client.bucket(training_bucket)
 
     # Support either "eval_files" or fall back to "train_files"
@@ -48,7 +48,7 @@ def download_eval_files(storage_client, training_bucket, manifest):
     return image_files
 
 
-def write_eval_data_yaml(class_names):
+def _write_eval_data_yaml(class_names):
     data_yaml = {
         "path": "/tmp/eval",
         "train": "images",
@@ -61,20 +61,19 @@ def write_eval_data_yaml(class_names):
         yaml.dump(data_yaml, f)
 
 
-def download_model(storage_client, model_bucket, run_id):
+def _download_model(storage_client, model_bucket, run_id):
     bucket = storage_client.bucket(model_bucket)
     blob = bucket.blob(f"runs/{run_id}/fish-id.onnx")
     blob.download_to_filename("/tmp/fish-id.onnx")
 
 
-def run_validation():
-    from ultralytics import YOLO
+def _run_validation():
     model = YOLO("/tmp/fish-id.onnx")
     results = model.val(data="/tmp/eval/data.yaml")
     return results
 
 
-def extract_metrics(results):
+def _extract_metrics(results):
     return {
         "mAP50": float(results.box.map50),
         "mAP50_95": float(results.box.map),
@@ -84,7 +83,7 @@ def extract_metrics(results):
     }
 
 
-def upload_eval_results(storage_client, model_bucket, run_id, metrics, eval_version):
+def _upload_eval_results(storage_client, model_bucket, run_id, metrics, eval_version):
     payload = {
         **metrics,
         "eval_version": eval_version,
@@ -103,8 +102,7 @@ def upload_eval_results(storage_client, model_bucket, run_id, metrics, eval_vers
     return payload
 
 
-def log_to_vertex(project_id, region, experiment, run_id, metrics):
-    from google.cloud import aiplatform
+def _log_to_vertex(project_id, region, experiment, run_id, metrics):
     aiplatform.init(project=project_id, location=region, experiment=experiment)
     with aiplatform.start_run(run_id):
         aiplatform.log_metrics({
@@ -116,7 +114,7 @@ def log_to_vertex(project_id, region, experiment, run_id, metrics):
 
 
 def main():
-    import google.cloud.storage as gcs
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     run_id = os.environ["RUN_ID"]
     training_bucket = os.environ["TRAINING_BUCKET"]
@@ -125,27 +123,27 @@ def main():
     region = os.environ["GCP_REGION"]
     experiment = os.environ.get("VERTEX_EXPERIMENT", "fish-id-eval")
 
-    print(f"[eval] run_id={run_id}")
+    _logger.info(f"[eval] run_id={run_id}")
 
     storage_client = gcs.Client()
 
-    eval_version = download_eval_current(storage_client, training_bucket)
-    print(f"[eval] eval_version={eval_version}")
+    eval_version = _download_eval_current(storage_client, training_bucket)
+    _logger.info(f"[eval] eval_version={eval_version}")
 
-    manifest = download_eval_manifest(storage_client, training_bucket, eval_version)
-    download_eval_files(storage_client, training_bucket, manifest)
-    write_eval_data_yaml(manifest["class_names"])
+    manifest = _download_eval_manifest(storage_client, training_bucket, eval_version)
+    _download_eval_files(storage_client, training_bucket, manifest)
+    _write_eval_data_yaml(manifest["class_names"])
 
-    download_model(storage_client, model_bucket, run_id)
+    _download_model(storage_client, model_bucket, run_id)
 
-    results = run_validation()
-    metrics = extract_metrics(results)
-    print(f"[eval] metrics: {metrics}")
+    results = _run_validation()
+    metrics = _extract_metrics(results)
+    _logger.info(f"[eval] metrics: {metrics}")
 
-    upload_eval_results(storage_client, model_bucket, run_id, metrics, eval_version)
-    log_to_vertex(project_id, region, experiment, run_id, metrics)
+    _upload_eval_results(storage_client, model_bucket, run_id, metrics, eval_version)
+    _log_to_vertex(project_id, region, experiment, run_id, metrics)
 
-    print("[eval] done.")
+    _logger.info("[eval] done.")
 
 
 if __name__ == "__main__":
