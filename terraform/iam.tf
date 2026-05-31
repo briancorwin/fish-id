@@ -163,6 +163,13 @@ resource "google_project_iam_member" "workflows_eventarc_receiver" {
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
+# Workflows SA — invoke Cloud Workflows executions (required for Eventarc to start the workflow)
+resource "google_project_iam_member" "workflows_invoker" {
+  project = var.project_id
+  role    = "roles/workflows.invoker"
+  member  = "serviceAccount:${google_service_account.workflows.email}"
+}
+
 # GCS service agent — publish events to Pub/Sub (required for Eventarc GCS triggers)
 resource "google_project_iam_member" "gcs_pubsub_publisher" {
   project = var.project_id
