@@ -328,6 +328,22 @@ python3 -m pytest tests/ -v
 
 All scripts in `scripts/` are run locally with your `gcloud` credentials. None require service account keys.
 
+### Setup
+
+The scripts have their own dependencies separate from the app. Create a virtualenv once:
+
+```bash
+python3 -m venv scripts/.venv
+source scripts/.venv/bin/activate
+pip install -r scripts/requirements.txt
+```
+
+Activate it before running any script:
+
+```bash
+source scripts/.venv/bin/activate
+```
+
 | Script | Purpose |
 |---|---|
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds and deploys to Cloud Run, and updates `production-run.json` with `manual_override: true`. Use for quick one-off deploys or testing a model outside the training pipeline. |
