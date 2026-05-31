@@ -263,7 +263,7 @@ Watch the pipeline execute in the Cloud Console under **Workflows → fish-id-tr
 
 ### 4. Ongoing: adding new training data
 
-Run `scripts/update-dataset.py` with an incremented `--dataset-version` whenever a new labeled dataset version is ready in Roboflow. The pipeline triggers automatically each time.
+Run `scripts/update-dataset.py` with an incremented `--dataset-version` whenever a new labeled dataset version is ready in Roboflow. The pipeline triggers automatically each time. `ROBOFLOW_API_KEY` must be set in your environment.
 
 ### Manual pipeline trigger (no new data)
 
