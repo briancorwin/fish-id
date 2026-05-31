@@ -110,7 +110,7 @@ def main() -> None:
         print(f"Step 1: Downloading Roboflow {workspace}/{project_name} version {roboflow_version}...")
         rf = Roboflow(api_key=api_key)
         project = rf.workspace(workspace).project(project_name)
-        dataset = project.version(roboflow_version).download("yolov8", location=str(tmp_path))
+        project.version(roboflow_version).download("yolov8", location=str(tmp_path), overwrite=True)
 
         export_dir = tmp_path
 
