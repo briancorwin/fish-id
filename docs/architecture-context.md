@@ -65,7 +65,7 @@ fish-id/
 └── README.md
 ```
 
-`fish-id.onnx` is not committed to the repo. In production it is stored in GCS and downloaded during CI/CD. For local builds, place it in `app/` before running `scripts/build.sh`.
+`fish-id.onnx` is not committed to the repo. In production it is stored in GCS and downloaded during CI/CD. For local builds, place it in `app/` before running `scripts/deploy-app.sh`.
 
 ---
 
@@ -111,7 +111,7 @@ Image validation on upload:
 
 - YOLOv8n fine-tuned on a specialized fish dataset created using Roboflow
 - Exported to ONNX for CPU inference (~300–600ms on Cloud Run 2 vCPU)
-- When deployed via GitHub Actions, `fish-id.onnx` is downloaded from GCS (`PROJECT_ID-fish-id-models` bucket) during the workflow. When deploying manually via CLI, `scripts/build.sh` expects a local copy of `fish-id.onnx` passed as an argument.
+- When deployed via GitHub Actions, `fish-id.onnx` is downloaded from GCS (`PROJECT_ID-fish-id-models` bucket) during the workflow. When deploying manually via CLI, `scripts/deploy-app.sh` expects a local copy of `fish-id.onnx` passed as an argument.
 
 ### Rate Limiting
 
@@ -130,7 +130,7 @@ When deployed via GitHub Actions, the Cloud Run URL is injected into `frontend/p
 
 ## CI/CD
 
-GitHub Actions handles all deploys on merge to `main`. Manual CLI deployment via `scripts/build.sh` remains available.
+GitHub Actions handles all deploys on merge to `main`. Manual CLI deployment via `scripts/deploy-app.sh` remains available.
 
 ### Workflow: `.github/workflows/deploy.yml`
 
@@ -253,7 +253,7 @@ The eval job follows the same pattern: reads `eval/current.json` to find the act
 
 The root `fish-id.onnx` path is unchanged, so `deploy.yml`'s existing `gsutil cp` step (which reads `gs://{PROJECT_ID}-fish-id-models/fish-id.onnx` via the `ONNX_MODEL_GCS_URI` secret) continues to work without modification. The promotion pipeline just controls what ends up there.
 
-`scripts/build.sh` (manual CLI build) is orthogonal to the automated pipeline. It currently takes a local ONNX path as a positional argument and bakes that file into the container at build time, with no GCS interaction. The pipeline doesn't depend on `build.sh`, but `build.sh` itself gets one new responsibility — see "Manual model override" below.
+`scripts/deploy-app.sh` (manual CLI build) is orthogonal to the automated pipeline. It currently takes a local ONNX path as a positional argument and bakes that file into the container at build time, with no GCS interaction. The pipeline doesn't depend on `deploy-app.sh`, but `deploy-app.sh` itself gets one new responsibility — see "Manual model override" below.
 
 ---
 
@@ -532,11 +532,11 @@ The script prints a warning that quality gates are being bypassed before proceed
 
 ---
 
-### Manual model override (`scripts/build.sh`)
+### Manual model override (`scripts/deploy-app.sh`)
 
-`scripts/build.sh` is the manual CLI deploy path. It bakes a local ONNX file into the container image and deploys to Cloud Run via `gcloud builds submit`. Because it bypasses the pipeline, the served model has no corresponding `runs/run-{R}/` directory — there is no training metadata, no eval results, and no provenance for it in GCS.
+`scripts/deploy-app.sh` is the manual CLI deploy path. It bakes a local ONNX file into the container image and deploys to Cloud Run via `gcloud builds submit`. Because it bypasses the pipeline, the served model has no corresponding `runs/run-{R}/` directory — there is no training metadata, no eval results, and no provenance for it in GCS.
 
-To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is actually serving), `build.sh` gains two new steps that run after the Cloud Run deploy succeeds:
+To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is actually serving), `deploy-app.sh` gains two new steps that run after the Cloud Run deploy succeeds:
 
 1. **Upload the local ONNX to the canonical serving path:** `gsutil cp <local-fish-id.onnx> gs://{PROJECT_ID}-fish-id-models/fish-id.onnx`. This keeps the GCS root in sync with the deployed Cloud Run revision so that the next automated promotion (or rollback) starts from a consistent state.
 2. **Overwrite `production-run.json`** with:
@@ -545,13 +545,13 @@ To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is
      "run_id": null,
      "manual_override": true,
      "promoted_at": "<UTC timestamp>",
-     "source": "scripts/build.sh",
+     "source": "scripts/deploy-app.sh",
      "operator": "<gcloud config get-value account>",
      "local_onnx_path": "<absolute path passed to build.sh>"
    }
    ```
 
-`build.sh` prints a warning before performing these uploads explaining that the production model is being set outside the run-tracking system.
+`deploy-app.sh` prints a warning before performing these uploads explaining that the production model is being set outside the run-tracking system.
 
 **Effect on the quality gate**: when the next training run reaches Gate 2, Cloud Workflows reads `production-run.json` and sees `run_id: null` / `manual_override: true`. Because there is no `runs/{run_id}/eval_results.json` to read for a baseline, Gate 2 is skipped for that single cycle (same behavior as the very first deploy when no production model exists). Gate 1 (absolute floor) still applies. After a successful auto-promotion, `production-run.json` is rewritten with `manual_override: false` and a real `run_id`, restoring normal regression-gate behavior on subsequent runs.
 

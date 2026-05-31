@@ -3,26 +3,45 @@ main:
   steps:
 
     # -------------------------------------------------------------------------
-    # Step 0: Init — parse event, generate run_id, read training image URI
+    # Step 0: Init — resolve trigger mode, parse args, read training image URI
     # -------------------------------------------------------------------------
     - init:
         assign:
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: "us-central1"
-          - gcs_object: ${args.data.name}
-          - dataset_version: ${text.split(gcs_object, "/")[1]}
-          - now_str: ${text.substring(time.format(sys.now()), 0, 19)}
-          - run_id: ${"run-" + text.replace_all(text.replace_all(now_str, "T", "-"), ":", "")}
           - training_bucket: ${project_id + "-fish-id-training"}
           - model_bucket: ${project_id + "-fish-id-models"}
           - vertex_experiment: "fish-id-eval"
+          - machine_type: "n1-standard-4"
+          - now_str: ${text.substring(time.format(sys.now()), 0, 19)}
+          - run_id: ${"run-" + text.replace_all(text.replace_all(now_str, "T", "-"), ":", "")}
+
+    - check_trigger_mode:
+        switch:
+          - condition: ${"data" in args}
+            next: parse_eventarc_args
+        next: parse_manual_args
+
+    # Eventarc path — args.data.name is the GCS object path
+    - parse_eventarc_args:
+        assign:
+          - gcs_object: ${args.data.name}
+          - dataset_version: ${text.split(gcs_object, "/")[1]}
           - config_version: "1"
-          - machine_type: "n1-highmem-4"
+        next: check_object_name
+
+    - check_object_name:
+        switch:
+          - condition: ${not(text.match_regex(gcs_object, "^versions/[^/]+/manifest\\.json$"))}
+            return:
+              status: "skipped"
+              reason: "not a versioned manifest — ignoring"
+              object: ${gcs_object}
 
     - read_training_image:
         call: http.get
         args:
-          url: ${"https://storage.googleapis.com/storage/v1/b/" + training_bucket + "/o/versions%2F" + dataset_version + "%2Fmanifest.json?alt=media"}
+          url: ${"https://storage.googleapis.com/storage/v1/b/" + model_bucket + "/o/training-image-latest.json?alt=media"}
           auth:
             type: OAuth2
         result: training_image_response
@@ -30,6 +49,14 @@ main:
     - parse_training_image:
         assign:
           - training_image: ${training_image_response.body.image}
+        next: submit_training_job
+
+    # Manual path — dataset_version, config_version, and image passed directly
+    - parse_manual_args:
+        assign:
+          - dataset_version: ${args.dataset_version}
+          - config_version: ${args.config_version}
+          - training_image: ${args.image}
 
     # -------------------------------------------------------------------------
     # Step 1: Submit training CustomJob
@@ -45,7 +72,9 @@ main:
             jobSpec:
               workerPoolSpecs:
                 - machineSpec:
-                    machineType: "n1-highmem-4"
+                    machineType: "n1-standard-4"
+                    acceleratorType: "NVIDIA_TESLA_T4"
+                    acceleratorCount: 1
                   replicaCount: 1
                   containerSpec:
                     imageUri: ${training_image}
@@ -112,8 +141,9 @@ main:
             assign:
               - training_poll_done: true
             next: poll_training_loop
-          - condition: ${training_poll_response.body.state == "JOB_STATE_FAILED" or training_poll_response.body.state == "JOB_STATE_CANCELLED"}
-            next: write_training_failure
+          - condition: ${training_poll_response.body.state == "JOB_STATE_QUEUED" or training_poll_response.body.state == "JOB_STATE_PENDING" or training_poll_response.body.state == "JOB_STATE_RUNNING" or training_poll_response.body.state == "JOB_STATE_CANCELLING" or training_poll_response.body.state == "JOB_STATE_UPDATING" or training_poll_response.body.state == "JOB_STATE_PAUSED"}
+            next: next_training_poll
+        next: write_training_failure
 
     - next_training_poll:
         next: poll_training_loop
@@ -219,8 +249,9 @@ main:
             assign:
               - eval_poll_done: true
             next: poll_eval_loop
-          - condition: ${eval_poll_response.body.state == "JOB_STATE_FAILED" or eval_poll_response.body.state == "JOB_STATE_CANCELLED"}
-            next: write_eval_failure
+          - condition: ${eval_poll_response.body.state == "JOB_STATE_QUEUED" or eval_poll_response.body.state == "JOB_STATE_PENDING" or eval_poll_response.body.state == "JOB_STATE_RUNNING" or eval_poll_response.body.state == "JOB_STATE_CANCELLING" or eval_poll_response.body.state == "JOB_STATE_UPDATING" or eval_poll_response.body.state == "JOB_STATE_PAUSED"}
+            next: next_eval_poll
+        next: write_eval_failure
 
     - next_eval_poll:
         next: poll_eval_loop
@@ -261,12 +292,28 @@ main:
           - eval_results: ${eval_results_response.body}
 
     - read_production_run:
-        call: http.get
-        args:
-          url: ${"https://storage.googleapis.com/storage/v1/b/" + model_bucket + "/o/production-run.json?alt=media"}
-          auth:
-            type: OAuth2
-        result: production_run_response
+        try:
+          call: http.get
+          args:
+            url: ${"https://storage.googleapis.com/storage/v1/b/" + model_bucket + "/o/production-run.json?alt=media"}
+            auth:
+              type: OAuth2
+          result: production_run_response
+        except:
+          as: e
+          steps:
+            - handle_missing_production_run:
+                switch:
+                  - condition: ${e.code == 404}
+                    next: set_first_run_default
+            - reraise_error:
+                raise: ${e}
+            - set_first_run_default:
+                assign:
+                  - production_run:
+                      run_id: null
+                      manual_override: true
+                next: check_gate1_map50
 
     - parse_production_run:
         assign:

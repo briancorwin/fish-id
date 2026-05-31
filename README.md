@@ -32,7 +32,7 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 ---
 
-## Initial Setup via CLI
+## App Setup via CLI (Manual Alternative to Terraform)
 
 ### 1. Enable required APIs
 
@@ -64,37 +64,14 @@ gcloud iam service-accounts create fish-id-cloud-run-sa \
 
 ---
 
-## Deployment via CLI
+## App Deployment via CLI
 
 ### API (Cloud Run)
 
-`scripts/build.sh` takes the path to your `fish-id.onnx`, your GCP project ID, and an optional region (default: `us-central1`). It copies the model into `app/` for the build, then removes it.
+`scripts/deploy-app.sh` handles the full build and deploy in one step. It copies `fish-id.onnx` into `app/` for the build, submits to Cloud Build, pushes the image to Artifact Registry, deploys to Cloud Run, then cleans up the local model copy.
 
 ```bash
-scripts/build.sh /path/to/fish-id.onnx ${GCP_PROJECT_ID} [${GCP_REGION}]
-```
-
-This submits the build to Cloud Build, which builds the image and pushes it to Artifact Registry:
-
-```bash
-gcloud builds submit app/ \
-  --tag ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/fish-id/fish-id \
-  --project ${GCP_PROJECT_ID}
-```
-
-Then deploy to Cloud Run:
-
-```bash
-gcloud run deploy fish-id \
-  --image ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/fish-id/fish-id \
-  --region ${GCP_REGION} \
-  --memory 2Gi \
-  --cpu 2 \
-  --concurrency 5 \
-  --max-instances 1 \
-  --service-account fish-id-cloud-run-sa@${GCP_PROJECT_ID}.iam.gserviceaccount.com \
-  --set-env-vars CORS_ORIGIN=https://${GCP_PROJECT_ID}.web.app \
-  --allow-unauthenticated
+scripts/deploy-app.sh /path/to/fish-id.onnx ${GCP_PROJECT_ID} [${GCP_REGION}]
 ```
 
 ### Frontend (Firebase Hosting)
@@ -119,9 +96,9 @@ firebase deploy --only hosting
 
 ---
 
-## Initial Setup via Terraform
+## Infrastructure Setup
 
-Terraform provisions all required GCP infrastructure: APIs, service accounts, Workload Identity Federation, Artifact Registry, and the GCS bucket for model storage.
+Terraform provisions all GCP infrastructure required by both the app and the continuous training pipeline: APIs, service accounts, IAM bindings, Workload Identity Federation, Artifact Registry, GCS buckets, Cloud Workflows, Eventarc trigger, and Secret Manager.
 
 ### 0. Authenticate
 
@@ -161,19 +138,53 @@ terraform output cicd_service_account_email
 terraform output model_bucket_name
 ```
 
+### 3. Store the GitHub PAT in Secret Manager
+
+The continuous training pipeline triggers a Cloud Run redeploy via the GitHub Actions API after promoting a new model. It authenticates using a GitHub Personal Access Token stored in Secret Manager.
+
+**Create the PAT on GitHub:**
+1. Go to **Settings → Developer settings → Personal access tokens → Fine-grained tokens**
+2. Click **Generate new token**
+3. Set a name (e.g. `fish-id-workflow-dispatch`) and an expiration
+4. Set **Resource owner** to your account and **Repository access** to **Only select repositories** → `briancorwin/fish-id`
+5. Under **Permissions → Repository permissions**, find **Actions** and set it to **Read and write** — this grants the ability to trigger workflow runs. Leave all other resources at No access
+6. Click **Generate token** and copy it immediately — it is only shown once
+
+**Store it in Secret Manager:**
+
+```bash
+echo -n "ghp_..." | gcloud secrets versions add github-deploy-pat \
+  --data-file=- \
+  --project=${GCP_PROJECT_ID}
+```
+
+The `-n` flag is required — omitting it stores a trailing newline in the secret, which causes GitHub API auth to fail.
+
+**Verify:**
+
+```bash
+gcloud secrets versions list github-deploy-pat --project=${GCP_PROJECT_ID}
+```
+
+One version in state `ENABLED` confirms it is ready.
+
 ---
 
-## Deployment via GitHub Actions
+## App Deployment via GitHub Actions
 
-Requires [Initial Setup via Terraform](#initial-setup-via-terraform) to be completed first — it creates the GCS bucket for model storage, the CI/CD service account, and the Workload Identity Federation configuration that GitHub Actions authenticates with.
+Requires [Infrastructure Setup](#infrastructure-setup) to be completed first.
 
 On every PR merged to `main`, two jobs run in sequence: `deploy-api` (Cloud Run) then `deploy-frontend` (Firebase Hosting). Both authenticate to GCP using Workload Identity Federation — no long-lived credentials required.
 
-### 1. Upload the model to GCS
+### 1. Upload the initial model to GCS
+
+The deploy workflow downloads `fish-id.onnx` from GCS at deploy time. Upload a starting model before the first deploy:
 
 ```bash
 gsutil cp /path/to/fish-id.onnx gs://$(terraform -chdir=terraform output -raw model_bucket_name)/fish-id.onnx
 ```
+
+Once the continuous training pipeline is running, promotions overwrite this path automatically.
 
 ### 2. Set GitHub Actions secrets
 
@@ -189,7 +200,78 @@ Navigate to **Settings → Secrets and variables → Actions** in the GitHub rep
 
 ### 3. Deploy
 
-Merge a PR to `main`. The Actions workflow will build and push the container image to Artifact Registry, deploy to Cloud Run, inject the Cloud Run URL into the frontend, and deploy to Firebase Hosting automatically.
+Merge a PR to `main`. The workflow builds and pushes the container image to Artifact Registry, deploys to Cloud Run, injects the Cloud Run URL into the frontend, and deploys to Firebase Hosting.
+
+---
+
+## Continuous Training Pipeline
+
+Requires [Infrastructure Setup](#infrastructure-setup) to be completed first.
+
+The pipeline runs on GCP — no manual steps are needed for individual training runs once it is bootstrapped. The flow is:
+
+```
+New dataset manifest uploaded to GCS
+  → Eventarc trigger → Cloud Workflows execution
+    → Vertex AI training job → Vertex AI eval job
+      → Quality gates → Model promotion → Cloud Run redeploy
+```
+
+### 1. Build the training container
+
+The training container is built automatically by `.github/workflows/build-training-image.yml` whenever changes are merged to `main` under `training/**`. It pushes the image to Artifact Registry and writes `training-image-latest.json` to the models bucket, which the pipeline reads to know which container to use.
+
+Verify it ran and wrote the file after your first merge:
+
+```bash
+gsutil cat gs://$(terraform -chdir=terraform output -raw model_bucket_name)/training-image-latest.json
+```
+
+### 2. Bootstrap the eval dataset
+
+The eval dataset is versioned separately from training data and only changes by deliberate human action. Set it up once before the first training run:
+
+```bash
+# Upload eval images and labels to the pool
+gsutil -m cp -r /path/to/eval/images/ gs://${GCP_PROJECT_ID}-fish-id-training/eval/images/
+gsutil -m cp -r /path/to/eval/labels/ gs://${GCP_PROJECT_ID}-fish-id-training/eval/labels/
+
+# Write the eval manifest (listing filenames in the eval pool)
+gsutil cp eval-manifest-v1.json gs://${GCP_PROJECT_ID}-fish-id-training/eval/versions/v1/manifest.json
+
+# Point current.json at v1
+echo '{"eval_version":"v1"}' | gsutil cp - gs://${GCP_PROJECT_ID}-fish-id-training/eval/current.json
+```
+
+### 3. Upload the initial training dataset
+
+Run `scripts/update-dataset.py` to export from Roboflow, sync to the GCS training pool, and write the dataset manifest. Writing the manifest finalizes the dataset version and automatically triggers the pipeline via Eventarc:
+
+```bash
+export ROBOFLOW_API_KEY=your_key_here
+
+python scripts/update-dataset.py \
+  --roboflow-version 1 \
+  --dataset-version v1 \
+  --bucket ${GCP_PROJECT_ID}-fish-id-training \
+  --workspace your-roboflow-workspace \
+  --project fish-id \
+  --description "Initial dataset"
+```
+
+Watch the pipeline execute in the Cloud Console under **Workflows → fish-id-training-pipeline**.
+
+### 4. Ongoing: adding new training data
+
+Run `scripts/update-dataset.py` with an incremented `--dataset-version` whenever a new labeled dataset version is ready in Roboflow. The pipeline triggers automatically each time. `ROBOFLOW_API_KEY` must be set in your environment.
+
+### Manual pipeline trigger (no new data)
+
+To re-run training on existing data — e.g. to test a new config — without uploading a new dataset:
+
+```bash
+python scripts/trigger-training.py --dataset-version v1 --config-version c1
+```
 
 ---
 
@@ -239,3 +321,33 @@ Open `http://localhost:3000`. The API defaults `CORS_ORIGIN` to `*` when the env
 source .venv/bin/activate
 python3 -m pytest tests/ -v
 ```
+
+---
+
+## Scripts
+
+All scripts in `scripts/` are run locally with your `gcloud` credentials. None require service account keys.
+
+### Setup
+
+The scripts have their own dependencies separate from the app. Create a virtualenv once:
+
+```bash
+python3 -m venv scripts/.venv
+source scripts/.venv/bin/activate
+pip install -r scripts/requirements.txt
+```
+
+Activate it before running any script:
+
+```bash
+source scripts/.venv/bin/activate
+```
+
+| Script | Purpose |
+|---|---|
+| `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds and deploys to Cloud Run, and updates `production-run.json` with `manual_override: true`. Use for quick one-off deploys or testing a model outside the training pipeline. |
+| `update-dataset.py` | Exports a dataset version from Roboflow, syncs images and labels to the GCS training pool, and writes `versions/vN/manifest.json`. Writing the manifest triggers the Eventarc → Cloud Workflows training pipeline automatically. Requires `ROBOFLOW_API_KEY` env var. |
+| `trigger-training.py` | Manually fires the training pipeline for a specific dataset version and config version without uploading new data. Calls `gcloud workflows run` directly. Use to re-run training on existing data or test a new config. |
+| `promote-run.py` | Promotes any previous run to production — copies its `fish-id.onnx` to the production path, updates `production-run.json`, and triggers a Cloud Run redeploy. Bypasses quality gates. Use for rollback or manual promotion. |
+| `rebaseline-production.py` | Re-scores the current production model against the current eval set. Run this once immediately after updating `eval/current.json` to a new eval version, before any new training run, to keep Gate 2 regression comparisons valid. |

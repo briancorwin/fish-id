@@ -150,6 +150,62 @@ git fetch origin --prune
 
 ---
 
+---
+
+## Python Best Practices
+
+### Module structure
+- All imports at the top of the file — no imports inside functions, except inside `try/except ImportError` blocks used to give a clear error message when an optional package is missing
+- Private helpers prefixed with `_` (e.g. `_load_config`, `_download_dataset`)
+- A single `main()` function as the entry point, called via `if __name__ == "__main__"`
+
+### Environment variables
+- Read all environment variables once, at the top of `main()` — never call `os.environ` inside helper functions
+- Use `os.environ["KEY"]` (raises `KeyError`) for required vars, `os.environ.get("KEY", default)` for optional ones
+
+### Logging
+- Use `logging` with a module-level `_logger = logging.getLogger(__name__)` — no `print()` statements in library code
+- `main()` configures `logging.basicConfig` once
+
+### Type annotations
+- Annotate all function signatures — parameters and return types
+
+### No hardcoded values
+- No hardcoded bucket names, project IDs, regions, or model paths — all come from environment variables or arguments
+
+### Idiomatic constructs
+- Use list/dict/set comprehensions instead of `for` loops that build collections
+- Use `with` for all file and resource operations — never open files without a context manager
+- Use f-strings — not `.format()` or `%`
+- Use `pathlib.Path` for file paths — not `os.path` string manipulation
+- Use `enumerate()`, `zip()`, `any()`, `all()` instead of manual index tracking
+
+### Exception handling
+- Always catch specific exceptions — never bare `except:` or `except Exception:`
+- Don't silence exceptions; if you catch and continue, log it
+- Let exceptions propagate unless you can meaningfully handle them at that level
+- Never use exceptions for normal control flow
+
+### Functions and arguments
+- Never use mutable default arguments (`def f(x=[])` is a bug — use `None` and assign inside)
+- Functions should do one thing; if a function needs a comment to explain what each section does, split it
+- Prefer returning values over mutating arguments
+
+### Structured data
+- Use `dataclasses` or `TypedDict` for structured data instead of plain dicts with implicit schemas
+- Use tuples for fixed-shape immutable records
+
+### Comments and docstrings
+- No docstrings on functions whose name and type annotations already explain them
+- No inline comments that restate what the code does — only comment the non-obvious *why*
+
+### General
+- Prefer `is None` / `is not None` over `== None`
+- Use `if not x:` only when a falsy check is intentional — be explicit with `if x is None` vs `if len(x) == 0`
+- Don't reassign variables to different types mid-function
+
+---
+
 ### Quick Reference
 
 ```bash

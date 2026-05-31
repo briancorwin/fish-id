@@ -7,7 +7,12 @@ Usage:
         --roboflow-version 5 \
         --dataset-version v5 \
         --bucket {PROJECT_ID}-fish-id-training \
+        --workspace my-workspace \
+        --project fish-id \
         --description "Added 200 new Bluegill images"
+
+Environment variables:
+    ROBOFLOW_API_KEY  Roboflow API key (required, kept as env var because it is a credential)
 """
 
 import argparse
@@ -75,22 +80,22 @@ def main() -> None:
     parser.add_argument("--roboflow-version", required=True, type=int, help="Roboflow dataset version number")
     parser.add_argument("--dataset-version", required=True, help="Dataset version label (e.g. v5)")
     parser.add_argument("--bucket", required=True, help="GCS training bucket name")
+    parser.add_argument("--workspace", required=True, help="Roboflow workspace name")
+    parser.add_argument("--project", required=True, help="Roboflow project name")
     parser.add_argument("--description", required=True, help="Human-readable description of changes")
     args = parser.parse_args()
 
     roboflow_version: int = args.roboflow_version
     dataset_version: str = args.dataset_version
     bucket_name: str = args.bucket
+    workspace: str = args.workspace
+    project_name: str = args.project
     description: str = args.description
 
-    # Env vars
     api_key = os.environ.get("ROBOFLOW_API_KEY")
-    workspace = os.environ.get("ROBOFLOW_WORKSPACE")
-    project_name = os.environ.get("ROBOFLOW_PROJECT")
-    for var, val in [("ROBOFLOW_API_KEY", api_key), ("ROBOFLOW_WORKSPACE", workspace), ("ROBOFLOW_PROJECT", project_name)]:
-        if not val:
-            print("ERROR: Required Roboflow configuration is missing.", file=sys.stderr)
-            sys.exit(1)
+    if not api_key:
+        print("ERROR: ROBOFLOW_API_KEY environment variable is not set.", file=sys.stderr)
+        sys.exit(1)
 
     try:
         from roboflow import Roboflow
@@ -105,7 +110,7 @@ def main() -> None:
         print(f"Step 1: Downloading Roboflow {workspace}/{project_name} version {roboflow_version}...")
         rf = Roboflow(api_key=api_key)
         project = rf.workspace(workspace).project(project_name)
-        dataset = project.version(roboflow_version).download("yolov8", location=str(tmp_path))
+        project.version(roboflow_version).download("yolov8", location=str(tmp_path), overwrite=True)
 
         export_dir = tmp_path
 

@@ -2,7 +2,7 @@
 set -e
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: scripts/build.sh <path-to-fish-id.onnx> <gcp-project> [region]"
+  echo "Usage: scripts/deploy-app.sh <path-to-fish-id.onnx> <gcp-project> [region]"
   exit 1
 fi
 

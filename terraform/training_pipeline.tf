@@ -34,12 +34,6 @@ resource "google_eventarc_trigger" "training_trigger" {
     value     = google_storage_bucket.training.name
   }
 
-  matching_criteria {
-    attribute = "name"
-    operator  = "match-path-pattern"
-    value     = "versions/*/manifest.json"
-  }
-
   destination {
     workflow = google_workflows_workflow.training_pipeline.id
   }
