@@ -170,6 +170,13 @@ resource "google_project_iam_member" "workflows_invoker" {
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
+# Workflows SA — act as the training SA when submitting Vertex AI CustomJobs
+resource "google_service_account_iam_member" "workflows_act_as_training" {
+  service_account_id = google_service_account.training.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.workflows.email}"
+}
+
 # GCS service agent — publish events to Pub/Sub (required for Eventarc GCS triggers)
 resource "google_project_iam_member" "gcs_pubsub_publisher" {
   project = var.project_id
