@@ -10,6 +10,17 @@ main:
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: "us-central1"
           - gcs_object: ${args.data.name}
+
+    - check_object_name:
+        switch:
+          - condition: ${not(text.match_regex(gcs_object, "^versions/[^/]+/manifest\\.json$"))}
+            return:
+              status: "skipped"
+              reason: "not a versioned manifest — ignoring"
+              object: ${gcs_object}
+
+    - parse_dataset_version:
+        assign:
           - dataset_version: ${text.split(gcs_object, "/")[1]}
           - now_str: ${text.substring(time.format(sys.now()), 0, 19)}
           - run_id: ${"run-" + text.replace_all(text.replace_all(now_str, "T", "-"), ":", "")}
@@ -22,7 +33,7 @@ main:
     - read_training_image:
         call: http.get
         args:
-          url: ${"https://storage.googleapis.com/storage/v1/b/" + training_bucket + "/o/versions%2F" + dataset_version + "%2Fmanifest.json?alt=media"}
+          url: ${"https://storage.googleapis.com/storage/v1/b/" + model_bucket + "/o/training-image-latest.json?alt=media"}
           auth:
             type: OAuth2
         result: training_image_response
@@ -261,12 +272,28 @@ main:
           - eval_results: ${eval_results_response.body}
 
     - read_production_run:
-        call: http.get
-        args:
-          url: ${"https://storage.googleapis.com/storage/v1/b/" + model_bucket + "/o/production-run.json?alt=media"}
-          auth:
-            type: OAuth2
-        result: production_run_response
+        try:
+          call: http.get
+          args:
+            url: ${"https://storage.googleapis.com/storage/v1/b/" + model_bucket + "/o/production-run.json?alt=media"}
+            auth:
+              type: OAuth2
+          result: production_run_response
+        except:
+          as: e
+          steps:
+            - handle_missing_production_run:
+                switch:
+                  - condition: ${e.code == 404}
+                    next: set_first_run_default
+            - reraise_error:
+                raise: ${e}
+            - set_first_run_default:
+                assign:
+                  - production_run:
+                      run_id: null
+                      manual_override: true
+                next: check_gate1_map50
 
     - parse_production_run:
         assign:

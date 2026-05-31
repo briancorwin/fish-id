@@ -155,3 +155,17 @@ resource "google_secret_manager_secret_iam_member" "workflows_github_pat_accesso
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.workflows.email}"
 }
+
+# Workflows SA — receive Eventarc events (required for Eventarc trigger service account)
+resource "google_project_iam_member" "workflows_eventarc_receiver" {
+  project = var.project_id
+  role    = "roles/eventarc.eventReceiver"
+  member  = "serviceAccount:${google_service_account.workflows.email}"
+}
+
+# GCS service agent — publish events to Pub/Sub (required for Eventarc GCS triggers)
+resource "google_project_iam_member" "gcs_pubsub_publisher" {
+  project = var.project_id
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:service-${data.google_project.project.number}@gs-project-accounts.iam.gserviceaccount.com"
+}
