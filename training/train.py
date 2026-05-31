@@ -13,7 +13,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _load_config(config_version):
-    config_path = f"/app/configs/c{config_version}.yaml"
+    config_path = f"/app/configs/c{config_version.lstrip('c')}.yaml"
     with open(config_path) as f:
         return yaml.safe_load(f)
 

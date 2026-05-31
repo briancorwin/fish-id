@@ -3,13 +3,32 @@ main:
   steps:
 
     # -------------------------------------------------------------------------
-    # Step 0: Init — parse event, generate run_id, read training image URI
+    # Step 0: Init — resolve trigger mode, parse args, read training image URI
     # -------------------------------------------------------------------------
     - init:
         assign:
           - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
           - region: "us-central1"
+          - training_bucket: ${project_id + "-fish-id-training"}
+          - model_bucket: ${project_id + "-fish-id-models"}
+          - vertex_experiment: "fish-id-eval"
+          - machine_type: "n1-highmem-4"
+          - now_str: ${text.substring(time.format(sys.now()), 0, 19)}
+          - run_id: ${"run-" + text.replace_all(text.replace_all(now_str, "T", "-"), ":", "")}
+
+    - check_trigger_mode:
+        switch:
+          - condition: ${"data" in args}
+            next: parse_eventarc_args
+        next: parse_manual_args
+
+    # Eventarc path — args.data.name is the GCS object path
+    - parse_eventarc_args:
+        assign:
           - gcs_object: ${args.data.name}
+          - dataset_version: ${text.split(gcs_object, "/")[1]}
+          - config_version: "1"
+        next: check_object_name
 
     - check_object_name:
         switch:
@@ -18,17 +37,6 @@ main:
               status: "skipped"
               reason: "not a versioned manifest — ignoring"
               object: ${gcs_object}
-
-    - parse_dataset_version:
-        assign:
-          - dataset_version: ${text.split(gcs_object, "/")[1]}
-          - now_str: ${text.substring(time.format(sys.now()), 0, 19)}
-          - run_id: ${"run-" + text.replace_all(text.replace_all(now_str, "T", "-"), ":", "")}
-          - training_bucket: ${project_id + "-fish-id-training"}
-          - model_bucket: ${project_id + "-fish-id-models"}
-          - vertex_experiment: "fish-id-eval"
-          - config_version: "1"
-          - machine_type: "n1-highmem-4"
 
     - read_training_image:
         call: http.get
@@ -41,6 +49,14 @@ main:
     - parse_training_image:
         assign:
           - training_image: ${training_image_response.body.image}
+        next: submit_training_job
+
+    # Manual path — dataset_version, config_version, and image passed directly
+    - parse_manual_args:
+        assign:
+          - dataset_version: ${args.dataset_version}
+          - config_version: ${args.config_version}
+          - training_image: ${args.image}
 
     # -------------------------------------------------------------------------
     # Step 1: Submit training CustomJob
