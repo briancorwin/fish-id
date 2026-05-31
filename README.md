@@ -254,6 +254,8 @@ python scripts/update-dataset.py \
   --roboflow-version 1 \
   --dataset-version v1 \
   --bucket ${GCP_PROJECT_ID}-fish-id-training \
+  --workspace your-roboflow-workspace \
+  --project fish-id \
   --description "Initial dataset"
 ```
 
@@ -329,7 +331,7 @@ All scripts in `scripts/` are run locally with your `gcloud` credentials. None r
 | Script | Purpose |
 |---|---|
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds and deploys to Cloud Run, and updates `production-run.json` with `manual_override: true`. Use for quick one-off deploys or testing a model outside the training pipeline. |
-| `update-dataset.py` | Exports a dataset version from Roboflow, syncs images and labels to the GCS training pool, and writes `versions/vN/manifest.json`. Writing the manifest triggers the Eventarc → Cloud Workflows training pipeline automatically. |
+| `update-dataset.py` | Exports a dataset version from Roboflow, syncs images and labels to the GCS training pool, and writes `versions/vN/manifest.json`. Writing the manifest triggers the Eventarc → Cloud Workflows training pipeline automatically. Requires `ROBOFLOW_API_KEY` env var. |
 | `trigger-training.py` | Manually fires the training pipeline for a specific dataset version and config version without uploading new data. Calls `gcloud workflows run` directly. Use to re-run training on existing data or test a new config. |
 | `promote-run.py` | Promotes any previous run to production — copies its `fish-id.onnx` to the production path, updates `production-run.json`, and triggers a Cloud Run redeploy. Bypasses quality gates. Use for rollback or manual promotion. |
 | `rebaseline-production.py` | Re-scores the current production model against the current eval set. Run this once immediately after updating `eval/current.json` to a new eval version, before any new training run, to keep Gate 2 regression comparisons valid. |
