@@ -139,8 +139,9 @@ main:
             assign:
               - training_poll_done: true
             next: poll_training_loop
-          - condition: ${training_poll_response.body.state == "JOB_STATE_FAILED" or training_poll_response.body.state == "JOB_STATE_CANCELLED"}
-            next: write_training_failure
+          - condition: ${training_poll_response.body.state == "JOB_STATE_QUEUED" or training_poll_response.body.state == "JOB_STATE_PENDING" or training_poll_response.body.state == "JOB_STATE_RUNNING" or training_poll_response.body.state == "JOB_STATE_CANCELLING" or training_poll_response.body.state == "JOB_STATE_UPDATING" or training_poll_response.body.state == "JOB_STATE_PAUSED"}
+            next: next_training_poll
+        next: write_training_failure
 
     - next_training_poll:
         next: poll_training_loop
@@ -246,8 +247,9 @@ main:
             assign:
               - eval_poll_done: true
             next: poll_eval_loop
-          - condition: ${eval_poll_response.body.state == "JOB_STATE_FAILED" or eval_poll_response.body.state == "JOB_STATE_CANCELLED"}
-            next: write_eval_failure
+          - condition: ${eval_poll_response.body.state == "JOB_STATE_QUEUED" or eval_poll_response.body.state == "JOB_STATE_PENDING" or eval_poll_response.body.state == "JOB_STATE_RUNNING" or eval_poll_response.body.state == "JOB_STATE_CANCELLING" or eval_poll_response.body.state == "JOB_STATE_UPDATING" or eval_poll_response.body.state == "JOB_STATE_PAUSED"}
+            next: next_eval_poll
+        next: write_eval_failure
 
     - next_eval_poll:
         next: poll_eval_loop
