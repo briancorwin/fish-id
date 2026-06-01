@@ -9,36 +9,77 @@ resource "google_secret_manager_secret" "github_deploy_pat" {
   depends_on = [google_project_service.apis["secretmanager.googleapis.com"]]
 }
 
-# Cloud Workflows definition for the continuous training pipeline
-resource "google_workflows_workflow" "training_pipeline" {
-  name            = "fish-id-training-pipeline"
-  region          = var.region
-  service_account = google_service_account.workflows.email
-  source_contents = file("${path.module}/../workflows/fish-id-training-pipeline.yaml")
-
-  depends_on = [google_project_service.apis["workflows.googleapis.com"]]
+# Zip the Cloud Functions trigger source so Cloud Build can deploy it
+data "archive_file" "pipeline_trigger" {
+  type        = "zip"
+  source_dir  = "${path.module}/../pipeline/trigger"
+  output_path = "/tmp/fish-id-pipeline-trigger.zip"
 }
 
-# Eventarc trigger — fires when a versioned manifest is finalized in the training bucket
-resource "google_eventarc_trigger" "training_trigger" {
-  name     = "fish-id-training-trigger"
+resource "google_storage_bucket_object" "pipeline_trigger_source" {
+  name   = "pipeline-trigger-${data.archive_file.pipeline_trigger.output_md5}.zip"
+  bucket = google_storage_bucket.training.name
+  source = data.archive_file.pipeline_trigger.output_path
+}
+
+# Cloud Functions v2: receives GCS finalise events and submits a Vertex AI Pipeline run
+resource "google_cloudfunctions2_function" "pipeline_trigger" {
+  name     = "fish-id-pipeline-trigger"
   location = var.region
 
-  matching_criteria {
-    attribute = "type"
-    value     = "google.cloud.storage.object.v1.finalized"
+  build_config {
+    runtime     = "python311"
+    entry_point = "trigger_pipeline"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.training.name
+        object = google_storage_bucket_object.pipeline_trigger_source.name
+      }
+    }
   }
 
-  matching_criteria {
-    attribute = "bucket"
-    value     = google_storage_bucket.training.name
+  service_config {
+    max_instance_count             = 1
+    min_instance_count             = 0
+    available_memory               = "256M"
+    timeout_seconds                = 60
+    service_account_email          = google_service_account.workflows.email
+    all_traffic_on_latest_revision = true
+    environment_variables = {
+      GCP_PROJECT_ID        = var.project_id
+      GCP_REGION            = var.region
+      TRAINING_BUCKET       = google_storage_bucket.training.name
+      MODEL_BUCKET          = google_storage_bucket.models.name
+      PIPELINE_SA           = google_service_account.workflows.email
+      PIPELINE_TEMPLATE_URI = "gs://${google_storage_bucket.models.name}/pipeline/fish-id-training-pipeline.json"
+      VERTEX_EXPERIMENT     = "fish-id-eval"
+    }
   }
 
-  destination {
-    workflow = google_workflows_workflow.training_pipeline.id
+  # Eventarc trigger: fires on every GCS object finalisation in the training bucket.
+  # The function itself filters for versioned manifests (versions/*/manifest.json).
+  event_trigger {
+    trigger_region        = var.region
+    event_type            = "google.cloud.storage.object.v1.finalized"
+    retry_policy          = "RETRY_POLICY_RETRY"
+    service_account_email = google_service_account.workflows.email
+    event_filters {
+      attribute = "bucket"
+      value     = google_storage_bucket.training.name
+    }
   }
 
-  service_account = google_service_account.workflows.email
+  depends_on = [
+    google_project_service.apis["cloudfunctions.googleapis.com"],
+    google_storage_bucket_object.pipeline_trigger_source,
+  ]
+}
 
-  depends_on = [google_project_service.apis["eventarc.googleapis.com"]]
+# Allow Eventarc (via the workflows SA) to invoke the Cloud Run service backing the function
+resource "google_cloud_run_v2_service_iam_member" "trigger_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloudfunctions2_function.pipeline_trigger.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.workflows.email}"
 }

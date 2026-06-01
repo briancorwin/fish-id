@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "training/**"
+      - "pipeline/**"
   workflow_dispatch:
 
 env:
@@ -51,3 +52,10 @@ jobs:
         run: |
           echo '{"image":"${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}","sha":"${{ github.sha }}","built_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' > /tmp/training-image-latest.json
           gsutil cp /tmp/training-image-latest.json gs://${{ env.GCP_PROJECT_ID }}-fish-id-models/training-image-latest.json
+
+      - name: Compile and upload pipeline
+        run: |
+          pip install -r pipeline/requirements.txt
+          python pipeline/pipeline.py
+          gsutil cp pipeline/fish-id-training-pipeline.json \
+            gs://${{ env.GCP_PROJECT_ID }}-fish-id-models/pipeline/fish-id-training-pipeline.json
