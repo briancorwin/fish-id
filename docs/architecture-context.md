@@ -573,7 +573,7 @@ To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is
 - `roles/aiplatform.user` on project (log metrics to Vertex AI Experiments)
 
 **Modified: `fish-id-cicd-sa`** (existing CI/CD SA used by GitHub Actions):
-- Add `roles/storage.objectCreator` on `{PROJECT_ID}-fish-id-models` bucket so `build-training-image.yml` can write `training-image-latest.json`. The existing `roles/storage.objectViewer` binding remains.
+- Add `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-models` bucket so `build-training-image.yml` can overwrite `training-image-latest.json`. `objectCreator` is insufficient — overwriting an existing object requires `storage.objects.delete`. The existing `roles/storage.objectViewer` binding remains.
 
 **New: `fish-id-workflows-sa`** (Cloud Functions v2 trigger + Vertex AI Pipeline components):
 - `roles/aiplatform.user` on project (submit Vertex AI PipelineJobs and CustomJobs)
