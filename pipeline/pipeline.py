@@ -1,6 +1,4 @@
 """Vertex AI Pipeline: training → eval → quality gate → model promotion."""
-from __future__ import annotations
-
 import logging
 from pathlib import Path
 from typing import NamedTuple
@@ -304,7 +302,7 @@ def fish_id_pipeline(
         run_id=run_id,
     ).after(eval_op)
 
-    with dsl.Condition(gate_op.outputs["passed"] == "true", name="gate-passed"):
+    with dsl.If(gate_op.outputs["passed"] == "true", name="gate-passed"):
         promote_op = promote_model(project=project, model_bucket=model_bucket, run_id=run_id)
 
         write_op = write_production_run(
