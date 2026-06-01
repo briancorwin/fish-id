@@ -94,7 +94,7 @@ Each service account in the training pipeline is scoped to only the permissions 
 | `fish-id-training-sa` (Vertex AI job containers) | `roles/storage.objectAdmin` | Training bucket |
 | | `roles/storage.objectCreator` | Models bucket |
 | | `roles/aiplatform.user` | Project |
-| `fish-id-workflows-sa` (Cloud Workflows) | `roles/storage.objectViewer` + `roles/storage.objectCreator` | Models bucket |
+| `fish-id-workflows-sa` (Cloud Functions v2 trigger / Vertex AI Pipeline) | `roles/storage.objectAdmin` | Models bucket |
 | | `roles/secretmanager.secretAccessor` | `github-deploy-pat` secret only |
 | | `roles/aiplatform.user` + `roles/logging.logWriter` | Project |
 | `fish-id-cicd-sa` (GitHub Actions) | `roles/storage.objectCreator` | Models bucket (for `training-image-latest.json`) |

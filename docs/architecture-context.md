@@ -36,6 +36,12 @@ fish-id/
 │   └── configs/
 │       ├── c1.yaml
 │       └── c2.yaml
+├── pipeline/                   # Vertex AI Pipeline (KFP v2)
+│   ├── pipeline.py             # KFP pipeline definition; compile with: python pipeline/pipeline.py
+│   ├── requirements.txt
+│   └── trigger/
+│       ├── main.py             # Cloud Functions v2 entry point (Eventarc → PipelineJob)
+│       └── requirements.txt
 ├── terraform/                  # GCP infrastructure-as-code
 │   ├── main.tf
 │   ├── variables.tf
@@ -82,8 +88,8 @@ fish-id/
 | Keyless CI/CD auth | Workload Identity Federation |
 | Managed training jobs | Vertex AI CustomJob |
 | Eval metric tracking & trend analysis | Vertex AI Experiments |
-| Dataset-change trigger | Eventarc |
-| Pipeline orchestration | Cloud Workflows |
+| Dataset-change trigger | Cloud Functions v2 (Eventarc) |
+| Pipeline orchestration | Vertex AI Pipelines (KFP v2) |
 | Sensitive config values | Secret Manager |
 
 ---
@@ -160,29 +166,30 @@ Both jobs authenticate using **Workload Identity Federation** — no long-lived 
 ```
 Dataset upload (GCS manifest.json finalized)
   → Eventarc trigger
-    → Cloud Workflows: fish-id-training-pipeline
-      ├─ Step 1: Submit Vertex AI CustomJob (train)
-      │    Reads:  gs://{PROJECT_ID}-fish-id-training/versions/v{N}/manifest.json
-      │            gs://{PROJECT_ID}-fish-id-training/images/ + labels/ (pool, manifest-filtered)
-      │            configs/c{M}.yaml (baked into container image)
-      │    Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
-      │            gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/metadata.json
-      ├─ Step 2: Submit Vertex AI CustomJob (eval)
-      │    Reads:  gs://{PROJECT_ID}-fish-id-training/eval/current.json (version pointer)
-      │            gs://{PROJECT_ID}-fish-id-training/eval/images/ + labels/ (manifest-filtered)
-      │            gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
-      │    Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/eval_results.json
-      │    Logs:   metrics to Vertex AI Experiments (experiment=fish-id-eval, run=run-{R})
-      ├─ Step 3: Quality gate (inline Workflows logic)
-      │    PASS → continue
-      │    FAIL → write runs/run-{R}/gate_failure.json, halt
-      ├─ Step 4: Model promotion
-      │    Copy runs/run-{R}/fish-id.onnx → gs://{PROJECT_ID}-fish-id-models/fish-id.onnx
-      │    Overwrite production-run.json → { "run_id": "run-{R}", "promoted_at": "...", "manual_override": false }
-      └─ Step 5: Trigger redeploy
-           HTTP call to GitHub Actions API (PAT from Secret Manager)
-             → workflow_dispatch on .github/workflows/deploy.yml
-               → existing deploy-api job: build container → Artifact Registry → Cloud Run
+    → Cloud Functions v2: fish-id-pipeline-trigger
+        reads training-image-latest.json, submits Vertex AI PipelineJob
+      → Vertex AI Pipeline run (KFP v2): fish-id-training-pipeline
+          ├─ run_training_job: Submit Vertex AI CustomJob (train)
+          │    Reads:  gs://{PROJECT_ID}-fish-id-training/versions/v{N}/manifest.json
+          │            gs://{PROJECT_ID}-fish-id-training/images/ + labels/ (pool, manifest-filtered)
+          │            configs/c{M}.yaml (baked into container image)
+          │    Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
+          │            gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/metadata.json
+          ├─ run_eval_job: Submit Vertex AI CustomJob (eval)
+          │    Reads:  gs://{PROJECT_ID}-fish-id-training/eval/current.json (version pointer)
+          │            gs://{PROJECT_ID}-fish-id-training/eval/images/ + labels/ (manifest-filtered)
+          │            gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
+          │    Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/eval_results.json
+          │    Logs:   metrics to Vertex AI Experiments (experiment=fish-id-eval, run=run-{R})
+          ├─ quality_gate: Read eval_results.json, apply Gate 1 + Gate 2
+          │    PASS → continue
+          │    FAIL → write runs/run-{R}/gate_failure.json, halt
+          ├─ promote_model: Copy runs/run-{R}/fish-id.onnx → gs://{PROJECT_ID}-fish-id-models/fish-id.onnx
+          ├─ write_production_run: Overwrite production-run.json
+          │    → { "run_id": "run-{R}", "promoted_at": "...", "manual_override": false }
+          └─ trigger_github_redeploy: HTTP call to GitHub Actions API (PAT from Secret Manager)
+               → workflow_dispatch on .github/workflows/deploy.yml
+                 → existing deploy-api job: build container → Artifact Registry → Cloud Run
 ```
 
 ---
@@ -191,10 +198,10 @@ Dataset upload (GCS manifest.json finalized)
 
 - **Source**: `google.cloud.storage.object.v1.finalized`
 - **Bucket**: `{PROJECT_ID}-fish-id-training`
-- **Path filter**: `match-path-pattern` operator with value `versions/*/manifest.json` (Eventarc's single-segment-wildcard operator; the literal `*` is not a glob in `prefix`/`suffix` filters)
-- **Target**: Cloud Workflows execution
+- **Path filter**: none at the Eventarc level — the Cloud Functions v2 trigger fires on every object finalization in the training bucket and filters internally for `versions/*/manifest.json` via regex
+- **Target**: Cloud Functions v2 function `fish-id-pipeline-trigger`
 
-Filtering to `manifest.json` finalization (not individual image uploads) prevents the pipeline from firing dozens of times during a bulk upload. A new dataset version is considered "ready" only when its manifest is written.
+Filtering inside the function (not at the Eventarc level) is simpler than Eventarc's path-pattern syntax and avoids firing on every individual image upload during a bulk sync. A new dataset version is considered "ready" only when its manifest is written.
 
 ---
 
@@ -317,7 +324,7 @@ The training container is built and pushed by a dedicated workflow, `.github/wor
    { "image": "{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:abc1234", "built_at": "<UTC>", "git_sha": "abc1234" }
    ```
 
-Cloud Workflows reads `training-image-latest.json` at the start of each pipeline execution to determine which image to submit to Vertex AI. Auto-triggered runs always use the latest image; `scripts/trigger-training.py --image <ref>` can override for ad-hoc experimentation.
+The Cloud Functions v2 trigger reads `training-image-latest.json` when submitting the PipelineJob to determine which training container image to pass as a pipeline parameter. Auto-triggered runs always use the latest image; `scripts/trigger-training.py --image <ref>` can override for ad-hoc experimentation.
 
 **Dockerfile responsibilities** (relevant because they remove runtime egress dependencies):
 - Base: `python:3.11-slim`
@@ -332,7 +339,7 @@ Cloud Workflows reads `training-image-latest.json` at the start of each pipeline
 
 ### Training Job (Vertex AI CustomJob)
 
-- **Container image**: `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{GIT_SHA}` — resolved at workflow execution time by reading `training-image-latest.json` (see "Training Container Build" above)
+- **Container image**: `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{GIT_SHA}` — resolved at pipeline submission time by the Cloud Functions trigger reading `training-image-latest.json` and passing it as a pipeline parameter (see "Training Container Build" above)
 - **Machine type**: `n1-highmem-4` (CPU-only) — switch to `n1-standard-4 + T4` only if dataset exceeds ~5000 images
 - **CustomJob `timeout`**: `7200s` (2 hours). Hard cap on runaway training cost; any run exceeding this is killed by Vertex AI and `gate_failure.json` is written.
 - **Service account**: `fish-id-training-sa`
@@ -357,22 +364,23 @@ lr0: 0.001
 
 A new config version (`c2.yaml`) is created by adding a file to the repo and pushing — no other changes required. The training script reads `configs/c{M}.yaml` from the local container filesystem and passes the parameters to `YOLO(config["model"]).train(**params)`.
 
-**Environment variables injected by Cloud Workflows:**
+**Pipeline parameters** (passed by the Cloud Functions trigger when submitting the PipelineJob):
 
-| Variable | Example value | Purpose | Derived from |
+| Parameter | Example value | Purpose | Derived from |
 |---|---|---|---|
-| `RUN_ID` | `run-2026-05-25-104530` | Output path prefix — constructs `runs/run-2026-05-25-104530/` in the models bucket | Workflow execution start time in UTC, formatted `run-YYYY-MM-DD-HHMMSS`. Naturally sortable, race-free, and stateless (Cloud Workflows holds no cross-execution state) |
-| `DATASET_VERSION` | `v5` | Which dataset manifest to fetch — constructs `versions/v5/manifest.json` | Parsed from the Eventarc event payload GCS object path |
-| `CONFIG_VERSION` | `c2` | Which training config to read from the container — selects `configs/c2.yaml` from the baked-in configs directory | Auto-trigger: latest config version; manual trigger: caller-specified |
-| `TRAINING_BUCKET` | `my-project-fish-id-training` | GCS bucket for image pool, manifests, and configs | Static value in Workflows definition |
-| `MODEL_BUCKET` | `my-project-fish-id-models` | GCS bucket for model artifact output | Static value in Workflows definition |
-| `GCP_PROJECT_ID` | `my-gcp-project` | Required by GCS and Vertex AI Python clients | Static value in Workflows definition |
-| `GCP_REGION` | `us-central1` | Required by Vertex AI Python client for regional API endpoints | Static value in Workflows definition |
-| `VERTEX_EXPERIMENT` | `fish-id-eval` | Vertex AI Experiment name for metric logging | Static value in Workflows definition |
+| `run_id` | `run-2026-05-25-104530` | Output path prefix — constructs `runs/run-2026-05-25-104530/` in the models bucket | Cloud Functions trigger generates at submission time: UTC timestamp formatted `run-YYYY-MM-DD-HH-MM-SS`. Naturally sortable and stateless |
+| `dataset_version` | `v5` | Which dataset manifest to fetch — constructs `versions/v5/manifest.json` | Parsed from the Eventarc event payload GCS object path |
+| `config_version` | `c2` | Which training config to read from the container — selects `configs/c2.yaml` from the baked-in configs directory | Auto-trigger: latest config version; manual trigger: caller-specified |
+| `training_bucket` | `my-project-fish-id-training` | GCS bucket for image pool, manifests, and configs | Cloud Functions env var `TRAINING_BUCKET` |
+| `model_bucket` | `my-project-fish-id-models` | GCS bucket for model artifact output | Cloud Functions env var `MODEL_BUCKET` |
+| `project` | `my-gcp-project` | Required by GCS and Vertex AI Python clients | Cloud Functions env var `GCP_PROJECT_ID` |
+| `region` | `us-central1` | Required by Vertex AI Python client for regional API endpoints | Cloud Functions env var `GCP_REGION` |
+| `vertex_experiment` | `fish-id-eval` | Vertex AI Experiment name for metric logging | Cloud Functions env var `VERTEX_EXPERIMENT` |
+| `training_image` | `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{SHA}` | Container image used for train + eval CustomJobs | Read from `training-image-latest.json` by Cloud Functions trigger |
 
 **Triggering:**
-- **Auto-trigger**: Eventarc fires on new dataset manifest upload → Cloud Workflows uses the triggering dataset version and the latest config version
-- **Manual trigger**: `scripts/trigger-training.py --dataset-version v5 --config-version c2 [--image <ref>]` calls `gcloud workflows run` directly, allowing experimentation with any dataset + config combination without uploading new data. The optional `--image` flag overrides the default of reading `training-image-latest.json`, useful for testing an unmerged training-image build
+- **Auto-trigger**: Eventarc fires on new dataset manifest upload → Cloud Functions v2 trigger filters for `versions/*/manifest.json`, reads `training-image-latest.json`, and submits a Vertex AI PipelineJob with the triggering dataset version and the latest config version
+- **Manual trigger**: `scripts/trigger-training.py --dataset-version v5 --config-version c2 [--image <ref>]` submits a Vertex AI PipelineJob directly, allowing experimentation with any dataset + config combination without uploading new data. The optional `--image` flag overrides the default of reading `training-image-latest.json`, useful for testing an unmerged training-image build
 
 **Training script behavior:**
 1. Read `configs/c{M}.yaml` from the local container filesystem to get architecture and hyperparameters
@@ -454,9 +462,9 @@ Both zero-detection and multi-detection edge cases are handled by the mAP calcul
 
 On first deployment (no production model exists), only Gate 1 applies.
 
-**On gate success**: Cloud Workflows proceeds to Step 4 — copies `fish-id.onnx` to the production path, overwrites `production-run.json`, and triggers the Cloud Run redeploy via `workflow_dispatch`.
+**On gate success**: the `quality_gate` pipeline component passes, and downstream components (`promote_model`, `write_production_run`, `trigger_github_redeploy`) execute in sequence.
 
-**On gate failure**: Cloud Workflows writes `gate_failure.json` to `runs/run-{R}/` (capturing which gate failed and the metric values), halts, and exits. No redeploy occurs. The run's artifacts remain in GCS for inspection. The Cloud Workflows execution log itself is queryable in Cloud Logging if a deeper trace is needed.
+**On gate failure**: the `quality_gate` component writes `gate_failure.json` to `runs/run-{R}/` (capturing which gate failed and the metric values) and raises an exception, causing the pipeline run to fail. No redeploy occurs. The run's artifacts remain in GCS for inspection. The Vertex AI Pipeline run graph is queryable in the Cloud Console under **Vertex AI → Pipelines → Runs**.
 
 Threshold note: A well-tuned YOLOv8n on a specialized dataset of ~1000 images typically achieves mAP50 of 0.60–0.85. The 0.50 floor should be tightened toward observed baselines after the first successful run.
 
@@ -481,15 +489,15 @@ Steps:
 2. Submit a Vertex AI CustomJob in `JOB_MODE=eval` with `RUN_ID=<production_run_id>` and the current eval version. The same training container image is used; the job downloads `runs/{production_run_id}/fish-id.onnx` and runs `YOLO.val()` against the new eval set.
 3. Overwrite `runs/{production_run_id}/eval_results.json` with the new scores. The new values are also logged to Vertex AI Experiments as a separate run (`run-{production_run_id}-rebaseline-{timestamp}`) so the trend record is preserved.
 
-Operational rule: **always re-baseline immediately after updating `eval/current.json`**. The plan deliberately puts this in a human-triggered script rather than wiring it into Cloud Workflows because the eval-set update itself is human-triggered — coupling them keeps the operator in the loop and avoids invisible scoring changes.
+Operational rule: **always re-baseline immediately after updating `eval/current.json`**. The plan deliberately puts this in a human-triggered script rather than wiring it into the Vertex AI Pipeline because the eval-set update itself is human-triggered — coupling them keeps the operator in the loop and avoids invisible scoring changes.
 
 ---
 
 ### Redeployment Trigger
 
-After model promotion, Cloud Workflows makes an HTTP call to the GitHub Actions API to trigger `workflow_dispatch` on the existing `.github/workflows/deploy.yml`. A `run_id` input (e.g. `run-2026-05-25-104530`) is passed to the workflow so the Cloud Run revision can be labelled for traceability.
+After model promotion, the `trigger_github_redeploy` pipeline component makes an HTTP call to the GitHub Actions API to trigger `workflow_dispatch` on the existing `.github/workflows/deploy.yml`. A `run_id` input (e.g. `run-2026-05-25-104530`) is passed to the workflow so the Cloud Run revision can be labelled for traceability.
 
-The GitHub PAT (with `workflow` scope) is stored in **Secret Manager** and read by Cloud Workflows via the Secret Manager API step (no long-lived credentials in Workflows source).
+The GitHub PAT (with `workflow` scope) is stored in **Secret Manager** and read by the pipeline component at execution time (no long-lived credentials in source).
 
 The existing `deploy.yml` gains the following changes (more involved than the framing implies — the existing `gcloud run deploy` call is a single multi-line bash command, so the conditional flag has to be built up as a shell variable):
 
@@ -553,7 +561,7 @@ To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is
 
 `deploy-app.sh` prints a warning before performing these uploads explaining that the production model is being set outside the run-tracking system.
 
-**Effect on the quality gate**: when the next training run reaches Gate 2, Cloud Workflows reads `production-run.json` and sees `run_id: null` / `manual_override: true`. Because there is no `runs/{run_id}/eval_results.json` to read for a baseline, Gate 2 is skipped for that single cycle (same behavior as the very first deploy when no production model exists). Gate 1 (absolute floor) still applies. After a successful auto-promotion, `production-run.json` is rewritten with `manual_override: false` and a real `run_id`, restoring normal regression-gate behavior on subsequent runs.
+**Effect on the quality gate**: when the next training run reaches Gate 2, the `quality_gate` pipeline component reads `production-run.json` and sees `run_id: null` / `manual_override: true`. Because there is no `runs/{run_id}/eval_results.json` to read for a baseline, Gate 2 is skipped for that single cycle (same behavior as the very first deploy when no production model exists). Gate 1 (absolute floor) still applies. After a successful auto-promotion, `production-run.json` is rewritten with `manual_override: false` and a real `run_id`, restoring normal regression-gate behavior on subsequent runs.
 
 ---
 
@@ -567,9 +575,9 @@ To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is
 **Modified: `fish-id-cicd-sa`** (existing CI/CD SA used by GitHub Actions):
 - Add `roles/storage.objectCreator` on `{PROJECT_ID}-fish-id-models` bucket so `build-training-image.yml` can write `training-image-latest.json`. The existing `roles/storage.objectViewer` binding remains.
 
-**New: `fish-id-workflows-sa`** (Cloud Workflows execution):
-- `roles/aiplatform.user` on project (submit and poll Vertex AI CustomJobs)
-- `roles/storage.objectViewer` + `roles/storage.objectCreator` on `{PROJECT_ID}-fish-id-models` bucket (read eval_results.json, production-run.json, and training-image-latest.json; write production-run.json and gate_failure.json; copy fish-id.onnx)
+**New: `fish-id-workflows-sa`** (Cloud Functions v2 trigger + Vertex AI Pipeline components):
+- `roles/aiplatform.user` on project (submit Vertex AI PipelineJobs and CustomJobs)
+- `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-models` bucket (read eval_results.json, production-run.json, and training-image-latest.json; write production-run.json and gate_failure.json; copy fish-id.onnx; pipeline root writes)
 - `roles/secretmanager.secretAccessor` on `github-deploy-pat` secret (call GitHub API for `workflow_dispatch`)
 - `roles/logging.logWriter` on project
 
@@ -585,17 +593,18 @@ To keep `production-run.json` truthful (i.e. always reflecting what Cloud Run is
 | `fish-id-training-sa` bindings on training bucket (objectAdmin) | `google_storage_bucket_iam_member` | New |
 | `fish-id-training-sa` bindings on models bucket (objectCreator) | `google_storage_bucket_iam_member` | New binding on existing bucket |
 | `fish-id-training-sa` project binding (aiplatform.user) | `google_project_iam_member` | New |
-| `fish-id-workflows-sa` bindings on models bucket (objectViewer, objectCreator) | `google_storage_bucket_iam_member` | New binding on existing bucket |
+| `fish-id-workflows-sa` binding on models bucket (objectAdmin) | `google_storage_bucket_iam_member` | New binding on existing bucket |
 | `fish-id-workflows-sa` project bindings (aiplatform.user, logging.logWriter) | `google_project_iam_member` | New |
 | `fish-id-workflows-sa` secret binding (secretmanager.secretAccessor) | `google_secret_manager_secret_iam_member` | New |
 | `fish-id-cicd-sa` objectCreator binding on models bucket | `google_storage_bucket_iam_member` | New binding on existing SA |
-| Eventarc trigger on `manifest.json` finalization | `google_eventarc_trigger` | New |
-| `fish-id-training-pipeline` workflow | `google_workflows_workflow` | New |
+| Pipeline trigger source zip (versioned by content hash) | `google_storage_bucket_object` | New |
+| Cloud Functions v2 trigger (`fish-id-pipeline-trigger`) | `google_cloudfunctions2_function` | New (replaces `google_workflows_workflow` + `google_eventarc_trigger`) |
+| Cloud Run invoker IAM for Eventarc → Cloud Functions | `google_cloud_run_v2_service_iam_member` | New |
 | `github-deploy-pat` secret | `google_secret_manager_secret` | New |
 
 **New APIs to enable in `apis.tf`**:
 - `aiplatform.googleapis.com`
-- `workflows.googleapis.com`
+- `cloudfunctions.googleapis.com`
 - `eventarc.googleapis.com`
 - `secretmanager.googleapis.com`
 
@@ -609,7 +618,7 @@ The existing "Cost Controls" table is for serving. The pipeline introduces a new
 |---|---|
 | Vertex AI CustomJob `timeout: 7200s` (2h) | Runaway training cost from a misconfigured run or stuck job |
 | `n1-highmem-4` CPU-only machine type | GPU billing on a dataset size that doesn't justify GPU |
-| Eventarc filter restricted to `manifest.json` finalization | Pipeline firing on every individual image upload during a bulk sync |
+| Cloud Functions trigger filters for `versions/*/manifest.json` internally | Pipeline firing on every individual image upload during a bulk sync |
 | Run artifacts retained, not deleted | (cost-neutral guardrail) avoids re-running training to recover a model |
 
 **Recommended out-of-band**: a project-level GCP budget alert at `$50/month` (or chosen threshold). Not enforced by code, but called out here so the operator sets it up — the auto-trigger means a malformed dataset upload could in principle cause repeated full-cost training runs, and the budget alert is the catch-all backstop. Configure via Billing → Budgets & alerts, scoped to the GCP project.
