@@ -121,17 +121,10 @@ resource "google_service_account" "workflows" {
   depends_on   = [google_project_service.apis["iam.googleapis.com"]]
 }
 
-# Workflows SA — read model artifacts from the models bucket
-resource "google_storage_bucket_iam_member" "workflows_model_reader" {
+# Workflows SA — full object access on the models bucket (pipeline root + eval/gate/promo writes)
+resource "google_storage_bucket_iam_member" "workflows_model_admin" {
   bucket = google_storage_bucket.models.name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.workflows.email}"
-}
-
-# Workflows SA — write model artifacts to the models bucket
-resource "google_storage_bucket_iam_member" "workflows_model_writer" {
-  bucket = google_storage_bucket.models.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.workflows.email}"
 }
 
@@ -160,13 +153,6 @@ resource "google_secret_manager_secret_iam_member" "workflows_github_pat_accesso
 resource "google_project_iam_member" "workflows_eventarc_receiver" {
   project = var.project_id
   role    = "roles/eventarc.eventReceiver"
-  member  = "serviceAccount:${google_service_account.workflows.email}"
-}
-
-# Workflows SA — invoke Cloud Workflows executions (required for Eventarc to start the workflow)
-resource "google_project_iam_member" "workflows_invoker" {
-  project = var.project_id
-  role    = "roles/workflows.invoker"
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
