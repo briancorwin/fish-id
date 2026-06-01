@@ -12,7 +12,17 @@ import pytest
 # Stub packages not installed in the test environment
 sys.modules.setdefault("google.cloud.aiplatform", MagicMock())
 sys.modules.setdefault("google.cloud.secretmanager", MagicMock())
-sys.modules.setdefault("google.cloud.storage", MagicMock())
+
+# Build one storage stub and wire it in two places so that
+# 'from google.cloud import storage' inside component bodies always resolves to it.
+# Two places are needed because test_eval.py may run first and replace
+# sys.modules["google.cloud"] with a MagicMock; in that case Python satisfies
+# 'from google.cloud import storage' via attribute lookup on the MagicMock
+# (ignoring sys.modules["google.cloud.storage"]), so we must set both.
+_storage_stub = MagicMock()
+sys.modules["google.cloud.storage"] = _storage_stub  # for real namespace-package case
+import google.cloud as _google_cloud  # noqa: E402
+_google_cloud.storage = _storage_stub  # for MagicMock-google.cloud case
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -23,9 +33,7 @@ from pipeline.pipeline import (  # noqa: E402
     write_production_run,
 )
 
-# The stub placed in sys.modules is the object that 'from google.cloud import storage'
-# resolves to inside each component's python_func body at test time.
-_STORAGE = sys.modules["google.cloud.storage"]
+_STORAGE = _storage_stub
 
 
 # ---------------------------------------------------------------------------
