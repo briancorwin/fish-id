@@ -82,7 +82,7 @@ resource "google_project_iam_member" "cicd_firebase_hosting" {
 # CI/CD SA — write new versioned models to the models bucket
 resource "google_storage_bucket_iam_member" "cicd_model_writer" {
   bucket = google_storage_bucket.models.name
-  role   = "roles/storage.objectCreator"
+  role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
