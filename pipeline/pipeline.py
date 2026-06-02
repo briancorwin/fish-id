@@ -33,6 +33,7 @@ def run_training_job(
 ) -> None:
     import logging  # noqa: PLC0415 — required inside KFP component body
     from google.cloud import aiplatform  # noqa: PLC0415
+    from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def run_training_job(
     )
     training_sa = f"fish-id-training-sa@{project}.iam.gserviceaccount.com"
     logger.info("Submitting training job fish-id-train-%s", run_id)
-    job.run(sync=True, service_account=training_sa)
+    job.run(sync=True, service_account=training_sa, scheduling_strategy=Scheduling.Strategy.SPOT)
     logger.info("Training job completed: %s", job.resource_name)
 
 
