@@ -98,7 +98,7 @@ firebase deploy --only hosting
 
 ## Infrastructure Setup
 
-Terraform provisions all GCP infrastructure required by both the app and the continuous training pipeline: APIs, service accounts, IAM bindings, Workload Identity Federation, Artifact Registry, GCS buckets, Cloud Workflows, Eventarc trigger, and Secret Manager.
+Terraform provisions all GCP infrastructure required by both the app and the continuous training pipeline: APIs, service accounts, IAM bindings, Workload Identity Federation, Artifact Registry, GCS buckets, Cloud Functions v2 (Eventarc trigger), Vertex AI Pipelines, and Secret Manager.
 
 ### 0. Authenticate
 
@@ -212,9 +212,10 @@ The pipeline runs on GCP — no manual steps are needed for individual training 
 
 ```
 New dataset manifest uploaded to GCS
-  → Eventarc trigger → Cloud Workflows execution
-    → Vertex AI training job → Vertex AI eval job
-      → Quality gates → Model promotion → Cloud Run redeploy
+  → Eventarc trigger → Cloud Functions v2 (fish-id-pipeline-trigger)
+    → Vertex AI Pipeline run (KFP v2)
+      → train component → eval component → quality gate
+        → promote → write production-run.json → trigger Cloud Run redeploy
 ```
 
 ### 1. Build the training container
@@ -259,7 +260,7 @@ python scripts/update-dataset.py \
   --description "Initial dataset"
 ```
 
-Watch the pipeline execute in the Cloud Console under **Workflows → fish-id-training-pipeline**.
+Watch the pipeline execute in the Cloud Console under **Vertex AI → Pipelines → Runs**.
 
 ### 4. Ongoing: adding new training data
 
@@ -347,7 +348,7 @@ source scripts/.venv/bin/activate
 | Script | Purpose |
 |---|---|
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds and deploys to Cloud Run, and updates `production-run.json` with `manual_override: true`. Use for quick one-off deploys or testing a model outside the training pipeline. |
-| `update-dataset.py` | Exports a dataset version from Roboflow, syncs images and labels to the GCS training pool, and writes `versions/vN/manifest.json`. Writing the manifest triggers the Eventarc → Cloud Workflows training pipeline automatically. Requires `ROBOFLOW_API_KEY` env var. |
-| `trigger-training.py` | Manually fires the training pipeline for a specific dataset version and config version without uploading new data. Calls `gcloud workflows run` directly. Use to re-run training on existing data or test a new config. |
+| `update-dataset.py` | Exports a dataset version from Roboflow, syncs images and labels to the GCS training pool, and writes `versions/vN/manifest.json`. Writing the manifest triggers the Eventarc → Cloud Functions v2 → Vertex AI Pipeline automatically. Requires `ROBOFLOW_API_KEY` env var. |
+| `trigger-training.py` | Manually fires the training pipeline for a specific dataset version and config version without uploading new data. Submits a Vertex AI PipelineJob directly. Use to re-run training on existing data or test a new config. |
 | `promote-run.py` | Promotes any previous run to production — copies its `fish-id.onnx` to the production path, updates `production-run.json`, and triggers a Cloud Run redeploy. Bypasses quality gates. Use for rollback or manual promotion. |
 | `rebaseline-production.py` | Re-scores the current production model against the current eval set. Run this once immediately after updating `eval/current.json` to a new eval version, before any new training run, to keep Gate 2 regression comparisons valid. |
