@@ -38,7 +38,8 @@ def run_training_job(
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    aiplatform.init(project=project, location=region, experiment=vertex_experiment)
+    aiplatform.init(project=project, location=region, experiment=vertex_experiment,
+                    staging_bucket=f"gs://{model_bucket}")
     job = aiplatform.CustomJob(
         display_name=f"fish-id-train-{run_id}",
         worker_pool_specs=[
@@ -95,7 +96,8 @@ def run_eval_job(
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    aiplatform.init(project=project, location=region, experiment=vertex_experiment)
+    aiplatform.init(project=project, location=region, experiment=vertex_experiment,
+                    staging_bucket=f"gs://{model_bucket}")
     job = aiplatform.CustomJob(
         display_name=f"fish-id-eval-{run_id}",
         worker_pool_specs=[
