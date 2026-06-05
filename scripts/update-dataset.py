@@ -9,7 +9,7 @@ that were removed from a newer Roboflow version (omit -d flag intentionally).
 Usage:
     python scripts/update-dataset.py \
         --roboflow-version 5 \
-        --bucket {PROJECT_ID}-fish-id-training \
+        --bucket ${GCP_PROJECT_ID}-fish-id-training \
         --workspace my-workspace \
         --project fish-id
 
