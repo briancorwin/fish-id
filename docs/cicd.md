@@ -33,11 +33,10 @@ Runs on push to `main` when files under `training/**` or `pipeline/**` change, p
 
 Steps:
 1. Build `training/Dockerfile` (build context: repo root) tagged `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{SHA}`
-2. Push to Artifact Registry
-3. Write `gs://{PROJECT_ID}-fish-id-models/training-image-latest.json` — records the image URI and SHA so the trigger script knows which container to use
-4. Compile `pipeline/pipeline.py` and upload the compiled JSON to `gs://{PROJECT_ID}-fish-id-models/pipeline/fish-id-training-pipeline.json` — this is the template URI that `scripts/trigger-training.py` passes when submitting a PipelineJob
+2. Push both `:{SHA}` and `:latest` tags to Artifact Registry
+3. Compile `pipeline/pipeline.py` and upload the compiled JSON to `gs://{PROJECT_ID}-fish-id-models/pipeline/fish-id-training-pipeline.json` — this is the template URI that `scripts/trigger-training.py` passes when submitting a PipelineJob
 
-Both the training image SHA and the compiled pipeline template must be current before a training run is triggered. Merging any change to `training/` or `pipeline/` automatically keeps both in sync.
+The compiled pipeline template must be current before a training run is triggered. Merging any change to `training/` or `pipeline/` automatically keeps both in sync.
 
 ---
 

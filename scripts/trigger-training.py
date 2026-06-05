@@ -1,104 +1,75 @@
 #!/usr/bin/env python3
 """
-Trigger the fish-id training pipeline via a GCP Workflow run.
+Manually submit a Vertex AI training pipeline run.
 
 Usage:
-    python scripts/trigger-training.py \
-        --dataset-version v5 \
-        --config-version c2 \
-        [--image us-central1-docker.pkg.dev/PROJECT/fish-id/fish-id-train:abc1234]
+    python scripts/trigger-training.py [--image <image-uri>]
+
+Environment variables:
+    GCP_PROJECT_ID   GCP project ID (required)
+    GCP_REGION       GCP region (required)
+    TRAINING_BUCKET  GCS training bucket name (required)
+    MODEL_BUCKET     GCS models bucket name (required)
 """
 
 import argparse
-import json
 import os
-import subprocess
-import sys
+from datetime import datetime, timezone
 
-from google.cloud import storage
-
-
-def get_models_bucket() -> str:
-    project_id = os.environ.get("GCP_PROJECT_ID")
-    if not project_id:
-        print("ERROR: GCP_PROJECT_ID environment variable is not set.", file=sys.stderr)
-        sys.exit(1)
-    return f"{project_id}-fish-id-models"
+from google.cloud import aiplatform
 
 
-def read_latest_image(bucket_name: str) -> str:
-    """Read the latest training container image URI from GCS."""
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob("training-image-latest.json")
-    if not blob.exists():
-        print(
-            f"ERROR: gs://{bucket_name}/training-image-latest.json not found.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    data = json.loads(blob.download_as_text())
-    image_uri = data.get("image_uri") or data.get("image")
-    if not image_uri:
-        print(
-            "ERROR: training-image-latest.json does not contain 'image_uri' or 'image' field.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return image_uri
+def _make_run_id() -> str:
+    return "run-" + datetime.now(timezone.utc).strftime("%Y-%m-%d-%H-%M-%S")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Trigger the fish-id training workflow.")
-    parser.add_argument("--dataset-version", required=True, help="Dataset version label (e.g. v5)")
-    parser.add_argument("--config-version", required=True, help="Training config version label (e.g. c2)")
+    parser = argparse.ArgumentParser(description="Submit a Vertex AI training pipeline run.")
     parser.add_argument(
         "--image",
-        required=False,
-        help="Training container image URI. If omitted, reads from GCS training-image-latest.json.",
+        help="Training container image URI. Defaults to the :latest tag in Artifact Registry.",
     )
     args = parser.parse_args()
 
-    dataset_version: str = args.dataset_version
-    config_version: str = args.config_version
+    project = os.environ["GCP_PROJECT_ID"]
+    region = os.environ["GCP_REGION"]
+    training_bucket = os.environ["TRAINING_BUCKET"]
+    model_bucket = os.environ["MODEL_BUCKET"]
 
-    models_bucket = get_models_bucket()
-
-    # Step 1: Resolve container image
     if args.image:
-        image_uri = args.image
-        print(f"Using provided image: {image_uri}")
+        training_image = args.image
     else:
-        print(f"Reading image from gs://{models_bucket}/training-image-latest.json...")
-        image_uri = read_latest_image(models_bucket)
-        print(f"Resolved image: {image_uri}")
+        training_image = f"{region}-docker.pkg.dev/{project}/fish-id/fish-id-train:latest"
 
-    # Step 2: Run the workflow
-    workflow_data = json.dumps({
-        "dataset_version": dataset_version,
-        "config_version": config_version,
-        "image": image_uri,
-    })
+    run_id = _make_run_id()
+    pipeline_template_uri = f"gs://{model_bucket}/pipeline/fish-id-training-pipeline.json"
 
-    cmd = [
-        "gcloud", "workflows", "run", "fish-id-training-pipeline",
-        "--data", workflow_data,
-    ]
-    print(f"\nRunning workflow: {' '.join(cmd)}")
+    print(f"\nSubmitting pipeline run: {run_id}")
+    print(f"  Template:        {pipeline_template_uri}")
+    print(f"  Training image:  {training_image}")
+    print(f"  Training bucket: {training_bucket}")
+    print(f"  Model bucket:    {model_bucket}")
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    aiplatform.init(project=project, location=region)
+    pipeline_job = aiplatform.PipelineJob(
+        display_name=f"fish-id-training-{run_id}",
+        template_path=pipeline_template_uri,
+        pipeline_root=f"gs://{model_bucket}/pipeline-root",
+        parameter_values={
+            "project": project,
+            "region": region,
+            "training_bucket": training_bucket,
+            "model_bucket": model_bucket,
+            "training_image": training_image,
+            "run_id": run_id,
+        },
+        enable_caching=False,
+    )
 
-    if result.returncode != 0:
-        print("ERROR: gcloud workflows run failed.", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
-        sys.exit(1)
-
-    # Step 3: Print execution name/ID
-    print(result.stdout)
-    # Parse execution name from output if present
-    for line in result.stdout.splitlines():
-        if "name:" in line.lower() or "execution" in line.lower():
-            print(f"  {line.strip()}")
+    workflows_sa = f"fish-id-workflows-sa@{project}.iam.gserviceaccount.com"
+    pipeline_job.submit(service_account=workflows_sa)
+    print(f"\nPipeline submitted: {pipeline_job.resource_name}")
+    print(f"View at: https://console.cloud.google.com/vertex-ai/pipelines/runs?project={project}")
 
 
 if __name__ == "__main__":
