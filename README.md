@@ -167,7 +167,7 @@ On every PR merged to `main`, two jobs run in sequence: `deploy-api` (Cloud Run)
 The deploy workflow downloads `fish-id.onnx` from GCS at deploy time. Upload a starting model before the first deploy:
 
 ```bash
-gsutil cp /path/to/fish-id.onnx gs://$(terraform -chdir=terraform output -raw model_bucket_name)/fish-id.onnx
+gsutil cp /path/to/fish-id.onnx gs://${GCP_PROJECT_ID}-fish-id-models/fish-id.onnx
 ```
 
 Once the continuous training pipeline is running, promotions overwrite this path automatically.
@@ -182,7 +182,7 @@ Navigate to **Settings → Secrets and variables → Actions** in the GitHub rep
 | `GCP_REGION` | Region used during Terraform apply (e.g. `us-central1`) |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of `terraform output workload_identity_provider` |
 | `GCP_SERVICE_ACCOUNT` | Output of `terraform output cicd_service_account_email` |
-| `ONNX_MODEL_GCS_URI` | `gs://${BUCKET_NAME}/fish-id.onnx` (bucket from `terraform output model_bucket_name`) |
+| `ONNX_MODEL_GCS_URI` | `gs://${GCP_PROJECT_ID}-fish-id-models/fish-id.onnx` |
 
 ### 3. Deploy
 
@@ -211,7 +211,7 @@ The training container is built automatically by `.github/workflows/build-traini
 Verify it ran and wrote the file after your first merge:
 
 ```bash
-gsutil cat gs://$(terraform -chdir=terraform output -raw model_bucket_name)/training-image-latest.json
+gsutil cat gs://${GCP_PROJECT_ID}-fish-id-models/training-image-latest.json
 ```
 
 ### 2. Bootstrap the eval dataset
