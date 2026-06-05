@@ -25,14 +25,12 @@ Hosted on GCP: Cloud Run API + Firebase Hosting frontend.
 
 ---
 
-## Prerequisites
+## App Setup via CLI (Manual Alternative to Terraform)
+
+### 0. Prerequisites
 
 - `gcloud`, `firebase`, and `terraform` installed and authenticated (see [CLI Tools](#cli-tools) above)
 - A trained `fish-id.onnx` model file
-
----
-
-## App Setup via CLI (Manual Alternative to Terraform)
 
 ### 1. Enable required APIs
 
@@ -98,11 +96,11 @@ firebase deploy --only hosting
 
 ## Infrastructure Setup
 
-Terraform provisions all GCP infrastructure required by both the app and the continuous training pipeline: APIs, service accounts, IAM bindings, Workload Identity Federation, Artifact Registry, GCS buckets, Cloud Functions v2 (Eventarc trigger), Vertex AI Pipelines, and Secret Manager.
+Terraform provisions all GCP infrastructure: APIs, service accounts, IAM bindings, Workload Identity Federation, Artifact Registry, GCS buckets, and Vertex AI resources.
 
 ### 0. Authenticate
 
-Terraform uses Application Default Credentials. Before running any Terraform commands, authenticate with your GCP account:
+Terraform uses Application Default Credentials. Before running any Terraform commands:
 
 ```bash
 gcloud auth application-default login
@@ -110,63 +108,51 @@ gcloud auth application-default login
 
 If you're in a headless environment: `gcloud auth application-default login --no-launch-browser`
 
-### 1. Apply
+### 1. Create the Terraform state bucket
+
+Terraform stores its state in GCS, but the state bucket must exist before `terraform init` can use it. Create it once manually:
+
+```bash
+gcloud storage buckets create gs://${GCP_PROJECT_ID}-fish-id-terraform-state \
+  --location=${GCP_REGION} \
+  --uniform-bucket-level-access \
+  --project=${GCP_PROJECT_ID}
+```
+
+### 2. Apply
+
+`${GITHUB_REPO}` is the full `owner/name` form, e.g. `briancorwin/fish-id`. Region defaults to `us-central1` if `-var="region=..."` is omitted.
 
 ```bash
 cd terraform/
-terraform init
-terraform plan -var="project_id=${GCP_PROJECT_ID}" -var="github_repo=${YOUR_GITHUB_ORG}/fish-id"
-terraform apply -var="project_id=${GCP_PROJECT_ID}" -var="github_repo=${YOUR_GITHUB_ORG}/fish-id"
-```
-
-Region defaults to `us-central1`. To override:
-
-```bash
+terraform init \
+  -backend-config="bucket=${GCP_PROJECT_ID}-fish-id-terraform-state"
 terraform apply \
   -var="project_id=${GCP_PROJECT_ID}" \
   -var="region=${GCP_REGION}" \
-  -var="github_repo=${YOUR_GITHUB_ORG}/fish-id"
+  -var="github_repo=${GITHUB_REPO}"
 ```
 
-### 2. Capture outputs
+After apply, import the state bucket so Terraform manages it going forward:
 
-After apply, retrieve the values needed for GitHub secrets:
+```bash
+terraform import \
+  -var="project_id=${GCP_PROJECT_ID}" \
+  -var="region=${GCP_REGION}" \
+  -var="github_repo=${GITHUB_REPO}" \
+  google_storage_bucket.terraform_state \
+  ${GCP_PROJECT_ID}-fish-id-terraform-state
+```
+
+### 3. Capture outputs
+
+Retrieve the values needed for GitHub secrets:
 
 ```bash
 terraform output workload_identity_provider
 terraform output cicd_service_account_email
 terraform output model_bucket_name
 ```
-
-### 3. Store the GitHub PAT in Secret Manager
-
-The continuous training pipeline triggers a Cloud Run redeploy via the GitHub Actions API after promoting a new model. It authenticates using a GitHub Personal Access Token stored in Secret Manager.
-
-**Create the PAT on GitHub:**
-1. Go to **Settings → Developer settings → Personal access tokens → Fine-grained tokens**
-2. Click **Generate new token**
-3. Set a name (e.g. `fish-id-workflow-dispatch`) and an expiration
-4. Set **Resource owner** to your account and **Repository access** to **Only select repositories** → `briancorwin/fish-id`
-5. Under **Permissions → Repository permissions**, find **Actions** and set it to **Read and write** — this grants the ability to trigger workflow runs. Leave all other resources at No access
-6. Click **Generate token** and copy it immediately — it is only shown once
-
-**Store it in Secret Manager:**
-
-```bash
-echo -n "ghp_..." | gcloud secrets versions add github-deploy-pat \
-  --data-file=- \
-  --project=${GCP_PROJECT_ID}
-```
-
-The `-n` flag is required — omitting it stores a trailing newline in the secret, which causes GitHub API auth to fail.
-
-**Verify:**
-
-```bash
-gcloud secrets versions list github-deploy-pat --project=${GCP_PROJECT_ID}
-```
-
-One version in state `ENABLED` confirms it is ready.
 
 ---
 

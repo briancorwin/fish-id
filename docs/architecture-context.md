@@ -45,7 +45,6 @@ fish-id/
 │   ├── iam.tf
 │   ├── storage.tf
 │   ├── artifact_registry.tf
-│   ├── training_pipeline.tf
 │   └── .terraform.lock.hcl    # committed to pin provider versions
 ├── .github/
 │   └── workflows/
@@ -55,7 +54,7 @@ fish-id/
 ├── scripts/
 │   ├── requirements.txt
 │   ├── deploy-app.sh           # manual CLI build: copies fish-id.onnx into app/, builds container, cleans up
-│   ├── update-dataset.py       # exports from Roboflow → GCS + creates/updates Vertex AI Dataset
+│   ├── update-dataset.py       # exports from Roboflow, syncs images + labels to GCS training bucket
 │   └── trigger-training.py     # manually submits a Vertex AI PipelineJob
 ├── tests/
 │   ├── conftest.py
@@ -85,7 +84,6 @@ fish-id/
 | Model storage | Cloud Storage |
 | Keyless CI/CD auth | Workload Identity Federation |
 | Managed training jobs | Vertex AI CustomJob |
-| Dataset management | Vertex AI Datasets (ImageDataset) |
 | Pipeline orchestration | Vertex AI Pipelines (KFP v2) |
 
 ---
@@ -164,7 +162,7 @@ scripts/trigger-training.py
   → submits Vertex AI PipelineJob
     → Vertex AI Pipeline (KFP v2): fish-id-training-pipeline
         └─ run_training_job: Submit Vertex AI CustomJob
-               Reads: Vertex AI Dataset (images + YOLO labels in GCS)
+               Reads: gs://{PROJECT_ID}-fish-id-training/images/ + labels/
                Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
                        gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/metadata.json
 ```
@@ -173,53 +171,35 @@ Pipeline output is manually retrieved from GCS and deployed via `scripts/deploy-
 
 ---
 
-### Vertex AI Datasets
+### Dataset Management
 
-Dataset images and labels are stored in GCS (YOLO format) and registered as a Vertex AI Managed Dataset resource (ImageDataset). The Vertex AI Dataset is the source of truth for which images are in the current dataset — it replaces the custom manifest.json approach.
-
-**`scripts/update-dataset.py`** manages the full dataset update flow:
+**`scripts/update-dataset.py`** exports from Roboflow and syncs to the GCS training bucket:
 
 ```bash
 python scripts/update-dataset.py \
-  --roboflow-version 5 \
-  --bucket {PROJECT_ID}-fish-id-training
+    --roboflow-version 5 \
+    --bucket {PROJECT_ID}-fish-id-training \
+    --workspace my-workspace \
+    --project fish-id
 ```
 
-Steps:
-1. **Export from Roboflow**: calls `project.version(N).download("yolov8")` via the Roboflow Python SDK. API key read from `ROBOFLOW_API_KEY` env var.
-2. **Sync to GCS**: runs `gsutil -m rsync` for each of the four directories (`train/images`, `train/labels`, `valid/images`, `valid/labels`) into the corresponding GCS pool paths. New or changed files only; does not delete.
-3. **Create or update Vertex AI Dataset**: uses `aiplatform.ImageDataset` to register the dataset with the GCS bucket location. Creates a new resource if none exists; otherwise imports the updated file list into the existing dataset.
-4. **Write `current-dataset.json`**: records the Vertex AI Dataset resource name to the training bucket root so the trigger script can read it at pipeline submission time.
-
-**`current-dataset.json` schema:**
-```json
-{
-  "dataset_resource_name": "projects/123456/locations/us-central1/datasets/789",
-  "roboflow_version": 5,
-  "updated_at": "2026-06-05T12:00:00Z"
-}
-```
-
-The training container downloads images directly from GCS (not via the Vertex AI Dataset export API) so no format conversion is required. The `dataset_resource_name` is passed through to `metadata.json` for traceability — it records which registered dataset version was used for each run.
+Requires `ROBOFLOW_API_KEY` env var. Uses `gsutil -m rsync` (no `-d` flag — files are never deleted from the pool). Re-running with the same version is safe and idempotent.
 
 ---
 
 ### GCS Bucket Structure
 
-**`{PROJECT_ID}-fish-id-training`** — training data (flat, no versioning):
+**`{PROJECT_ID}-fish-id-training`** — training data (flat pool, no versioning):
 
 ```
 {PROJECT_ID}-fish-id-training/
 ├── images/
-│   ├── train/          # flat pool of all training images
+│   ├── train/
 │   └── val/
-├── labels/
-│   ├── train/          # YOLO .txt label files (one per image)
-│   └── val/
-└── current-dataset.json   # Vertex AI Dataset resource name pointer
+└── labels/
+    ├── train/          # YOLO .txt label files
+    └── val/
 ```
-
-No manifest files, no per-version subdirectories. Dataset history is managed by Vertex AI.
 
 **`{PROJECT_ID}-fish-id-models`** — model artifacts:
 
@@ -289,7 +269,6 @@ lr0: 0.001
 | Parameter | Example | Derived from |
 |---|---|---|
 | `run_id` | `run-2026-06-05-143000` | Generated at submission: UTC timestamp `run-YYYY-MM-DD-HHMMSS` |
-| `dataset_resource_name` | `projects/123/.../datasets/456` | Read from `current-dataset.json` in training bucket |
 | `training_bucket` | `my-project-fish-id-training` | Env var `TRAINING_BUCKET` |
 | `model_bucket` | `my-project-fish-id-models` | Env var `MODEL_BUCKET` |
 | `project` | `my-gcp-project` | Env var `GCP_PROJECT_ID` |
@@ -298,7 +277,7 @@ lr0: 0.001
 
 **Training script behavior (`train.py`):**
 1. Read `config.yaml` from the container filesystem
-2. Download images + labels from GCS (`images/` and `labels/` directories) to `/tmp/dataset/`
+2. Download all images + labels from GCS (`{TRAINING_BUCKET}/images/` and `labels/`) to `/tmp/dataset/`
 3. `YOLO(config["model"]).train(data=..., **params)`
 4. Export best checkpoint to ONNX
 5. Upload `fish-id.onnx` and `metadata.json` to `gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/`
@@ -307,7 +286,6 @@ lr0: 0.001
 ```json
 {
   "run_id": "run-2026-06-05-143000",
-  "dataset_resource_name": "projects/123/locations/us-central1/datasets/456",
   "container_image": "{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:abc1234",
   "model_architecture": "yolov8n",
   "base_weights": "yolov8n.pt",
@@ -334,7 +312,6 @@ init(runner=SubprocessRunner(use_venv=True))
 from pipeline.pipeline import fish_id_training_pipeline
 fish_id_training_pipeline(
     run_id="run-test-local",
-    dataset_resource_name="projects/.../datasets/...",
     training_bucket="my-project-fish-id-training",
     model_bucket="my-project-fish-id-models",
     project="my-gcp-project",
@@ -370,8 +347,8 @@ Short-circuit mode uses the same code paths as production — it just skips the 
 ### IAM
 
 **`fish-id-training-sa`** (Vertex AI CustomJob containers):
-- `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-training` bucket
-- `roles/storage.objectCreator` on `{PROJECT_ID}-fish-id-models` bucket
+- `roles/storage.objectViewer` on `{PROJECT_ID}-fish-id-training` bucket (read training data)
+- `roles/storage.objectCreator` on `{PROJECT_ID}-fish-id-models` bucket (write run artifacts)
 - `roles/aiplatform.user` on project
 
 **`fish-id-workflows-sa`** (pipeline components):
@@ -388,6 +365,7 @@ Short-circuit mode uses the same code paths as production — it just skips the 
 
 | Resource | Type |
 |---|---|
+| `{PROJECT_ID}-fish-id-terraform-state` bucket | `google_storage_bucket` (bootstrap: create manually first, then import) |
 | `{PROJECT_ID}-fish-id-training` bucket | `google_storage_bucket` |
 | `fish-id-training-sa` | `google_service_account` |
 | `fish-id-workflows-sa` | `google_service_account` |
@@ -419,7 +397,7 @@ These were intentionally removed to establish a working e2e baseline first:
 - **Eval dataset + eval job** — `eval.py`, `run_eval_job` component, and eval GCS structure removed for now
 - **Re-baselining** — not applicable without quality gates
 - **Multi-config support** — single `config.yaml` instead of per-run config selection
-- **Automated promotion + redeploy** (`promote_model`, `trigger_github_redeploy` pipeline components, `github-deploy-pat` secret) — pipeline output (ONNX) is manually retrieved from GCS and deployed via `deploy-app.sh` for now
+- **Automated promotion + redeploy** (`promote_model`, `trigger_github_redeploy` pipeline components) — pipeline output (ONNX) is manually retrieved from GCS and deployed via `deploy-app.sh` for now
 
 ---
 

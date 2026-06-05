@@ -47,14 +47,14 @@ resource "google_service_account_iam_member" "cicd_wif" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-# Deploy and update Cloud Run services — developer role excludes service deletion and IAM policy management
+# Deploy and update Cloud Run services
 resource "google_project_iam_member" "cicd_run_developer" {
   project = var.project_id
   role    = "roles/run.developer"
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
-# Attach the Cloud Run SA when deploying (required by gcloud run deploy --service-account)
+# Attach the Cloud Run SA when deploying
 resource "google_service_account_iam_member" "cicd_sa_user" {
   service_account_id = google_service_account.cloud_run.name
   role               = "roles/iam.serviceAccountUser"
@@ -77,9 +77,7 @@ resource "google_project_iam_member" "cicd_firebase_hosting" {
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
-# Read the ONNX model from GCS (bucket-level binding in storage.tf)
-
-# CI/CD SA — write new versioned models to the models bucket
+# CI/CD SA — read and write model artifacts (download for deploy, write training-image-latest.json)
 resource "google_storage_bucket_iam_member" "cicd_model_writer" {
   bucket = google_storage_bucket.models.name
   role   = "roles/storage.objectAdmin"
@@ -93,10 +91,10 @@ resource "google_service_account" "training" {
   depends_on   = [google_project_service.apis["iam.googleapis.com"]]
 }
 
-# Training SA — full object access on the training data bucket
-resource "google_storage_bucket_iam_member" "training_training_bucket_admin" {
+# Training SA — read training images and labels
+resource "google_storage_bucket_iam_member" "training_training_bucket_reader" {
   bucket = google_storage_bucket.training.name
-  role   = "roles/storage.objectAdmin"
+  role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.training.email}"
 }
 
@@ -107,28 +105,28 @@ resource "google_storage_bucket_iam_member" "training_model_writer" {
   member = "serviceAccount:${google_service_account.training.email}"
 }
 
-# Training SA — submit and manage Vertex AI custom jobs
+# Training SA — submit Vertex AI custom jobs
 resource "google_project_iam_member" "training_aiplatform_user" {
   project = var.project_id
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.training.email}"
 }
 
-# Workflows service account — used by Cloud Workflows execution
+# Workflows service account — used by KFP pipeline components
 resource "google_service_account" "workflows" {
   account_id   = "fish-id-workflows-sa"
   display_name = "fish-id Workflows SA"
   depends_on   = [google_project_service.apis["iam.googleapis.com"]]
 }
 
-# Workflows SA — full object access on the models bucket (pipeline root + eval/gate/promo writes)
+# Workflows SA — pipeline root artifacts and model bucket reads
 resource "google_storage_bucket_iam_member" "workflows_model_admin" {
   bucket = google_storage_bucket.models.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.workflows.email}"
 }
 
-# Workflows SA — submit and manage Vertex AI custom jobs
+# Workflows SA — submit Vertex AI pipeline and custom jobs
 resource "google_project_iam_member" "workflows_aiplatform_user" {
   project = var.project_id
   role    = "roles/aiplatform.user"
@@ -142,30 +140,9 @@ resource "google_project_iam_member" "workflows_log_writer" {
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
-# Workflows SA — access the GitHub PAT secret
-resource "google_secret_manager_secret_iam_member" "workflows_github_pat_accessor" {
-  secret_id = google_secret_manager_secret.github_deploy_pat.secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.workflows.email}"
-}
-
-# Workflows SA — receive Eventarc events (required for Eventarc trigger service account)
-resource "google_project_iam_member" "workflows_eventarc_receiver" {
-  project = var.project_id
-  role    = "roles/eventarc.eventReceiver"
-  member  = "serviceAccount:${google_service_account.workflows.email}"
-}
-
 # Workflows SA — act as the training SA when submitting Vertex AI CustomJobs
 resource "google_service_account_iam_member" "workflows_act_as_training" {
   service_account_id = google_service_account.training.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.workflows.email}"
-}
-
-# GCS service agent — publish events to Pub/Sub (required for Eventarc GCS triggers)
-resource "google_project_iam_member" "gcs_pubsub_publisher" {
-  project = var.project_id
-  role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:service-${data.google_project.project.number}@gs-project-accounts.iam.gserviceaccount.com"
 }
