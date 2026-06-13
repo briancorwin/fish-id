@@ -6,29 +6,22 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 6.0"
     }
-    google-beta = {
-      source  = "hashicorp/google-beta"
-      version = "~> 6.0"
-    }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.0"
-    }
   }
 
-  # Uncomment to store state in GCS instead of locally:
-  # backend "gcs" {
-  #   bucket = "YOUR_PROJECT_ID-terraform-state"
-  #   prefix = "fish-id"
-  # }
+  # bucket is passed at init time because backend blocks don't support variable interpolation.
+  # One-time bootstrap (before first terraform init):
+  #   gcloud storage buckets create gs://PROJECT_ID-fish-id-terraform-state \
+  #     --location=REGION --uniform-bucket-level-access
+  # Then:
+  #   terraform init -backend-config="bucket=PROJECT_ID-fish-id-terraform-state"
+  # After apply, import the bucket so Terraform manages it:
+  #   terraform import google_storage_bucket.terraform_state PROJECT_ID-fish-id-terraform-state
+  backend "gcs" {
+    prefix = "fish-id"
+  }
 }
 
 provider "google" {
-  project = var.project_id
-  region  = var.region
-}
-
-provider "google-beta" {
   project = var.project_id
   region  = var.region
 }

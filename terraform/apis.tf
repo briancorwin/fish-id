@@ -10,9 +10,6 @@ locals {
     "firebase.googleapis.com",
     "firebasehosting.googleapis.com",
     "aiplatform.googleapis.com",
-    "cloudfunctions.googleapis.com",
-    "eventarc.googleapis.com",
-    "secretmanager.googleapis.com",
   ])
 }
 

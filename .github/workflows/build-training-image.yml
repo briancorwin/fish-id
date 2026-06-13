@@ -47,11 +47,10 @@ jobs:
       - name: Push training image
         run: |
           docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}
-
-      - name: Write training-image-latest.json to GCS
-        run: |
-          echo '{"image":"${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}","sha":"${{ github.sha }}","built_at":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' > /tmp/training-image-latest.json
-          gsutil cp /tmp/training-image-latest.json gs://${{ env.GCP_PROJECT_ID }}-fish-id-models/training-image-latest.json
+          docker tag \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }} \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:latest
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:latest
 
       - name: Compile and upload pipeline
         run: |

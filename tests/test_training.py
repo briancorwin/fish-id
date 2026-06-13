@@ -30,7 +30,6 @@ if "ultralytics" not in sys.modules:
     sys.modules["ultralytics"] = MagicMock()
 
 import train as train_module
-import eval as eval_module
 
 
 # ---------------------------------------------------------------------------
@@ -135,52 +134,24 @@ class TestManifestParsing:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: Config YAML loading
+# Test 2: Config YAML
 # ---------------------------------------------------------------------------
 
-class TestConfigLoading:
-    """train.py reads real config files from disk correctly."""
+class TestConfig:
+    """training/config.yaml has all required keys with valid values."""
 
-    CONFIGS_DIR = TRAINING_DIR / "configs"
+    CONFIG_PATH = TRAINING_DIR / "config.yaml"
 
-    def test_c1_model(self):
-        with open(self.CONFIGS_DIR / "c1.yaml") as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["model"] == "yolov8n.pt"
-
-    def test_c1_epochs(self):
-        with open(self.CONFIGS_DIR / "c1.yaml") as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["epochs"] == 50
-
-    def test_c1_batch(self):
-        with open(self.CONFIGS_DIR / "c1.yaml") as f:
-            cfg = yaml.safe_load(f)
-        assert cfg["batch"] == 16
-
-    @pytest.mark.parametrize("version", ["c1"])
-    def test_all_required_keys_present(self, version):
-        with open(self.CONFIGS_DIR / f"{version}.yaml") as f:
+    def test_all_required_keys_present(self):
+        with open(self.CONFIG_PATH) as f:
             cfg = yaml.safe_load(f)
         required_keys = {"model", "epochs", "imgsz", "batch", "optimizer", "lr0"}
-        assert required_keys <= set(cfg.keys()), (
-            f"{version}.yaml missing keys: {required_keys - set(cfg.keys())}"
-        )
+        assert required_keys <= set(cfg.keys())
 
-    def test_load_config_function_c1(self):
-        """train_module._load_config reads from /app/configs/ path."""
-        with patch("builtins.open", create=True) as mock_open:
-            import io
-            mock_open.return_value.__enter__ = lambda s: io.StringIO(
-                "model: yolov8n.pt\nepochs: 50\nimgsz: 640\nbatch: 16\noptimizer: SGD\nlr0: 0.01\n"
-            )
-            mock_open.return_value.__exit__ = MagicMock(return_value=False)
-
-            cfg = train_module._load_config("1")
-
-        mock_open.assert_called_once_with("/app/configs/c1.yaml")
+    def test_model_is_yolov8n(self):
+        with open(self.CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f)
         assert cfg["model"] == "yolov8n.pt"
-        assert cfg["epochs"] == 50
 
 
 # ---------------------------------------------------------------------------
