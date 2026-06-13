@@ -36,10 +36,14 @@ def run_training_job(
     from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
     aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
-    machine_spec: dict = {"machine_type": "n1-standard-4"}
-    if not cpu_only:
-        machine_spec["accelerator_type"] = "NVIDIA_TESLA_T4"
-        machine_spec["accelerator_count"] = 1
+    if cpu_only:
+        machine_spec: dict = {"machine_type": "n4-standard-16"}
+    else:
+        machine_spec: dict = {
+            "machine_type": "n1-standard-4",
+            "accelerator_type": "NVIDIA_TESLA_T4",
+            "accelerator_count": 1,
+        }
     job = aiplatform.CustomJob(
         display_name=f"fish-id-train-{run_id}",
         worker_pool_specs=[

@@ -243,12 +243,12 @@ class TestDownloadDataset:
 class TestTrainModel:
     def test_yolo_instantiated_with_model_from_config(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE)
+            train_module._train_model(CONFIG_FIXTURE, workers=4)
         mock_yolo.assert_called_once_with("yolov8n.pt")
 
     def test_train_called_with_correct_hyperparams(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE)
+            train_module._train_model(CONFIG_FIXTURE, workers=4)
         mock_yolo.return_value.train.assert_called_once_with(
             data="/tmp/dataset/data.yaml",
             epochs=5,
@@ -256,11 +256,12 @@ class TestTrainModel:
             batch=16,
             optimizer="AdamW",
             lr0=0.001,
+            workers=4,
         )
 
     def test_returns_train_results(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            result = train_module._train_model(CONFIG_FIXTURE)
+            result = train_module._train_model(CONFIG_FIXTURE, workers=4)
         assert result is mock_yolo.return_value.train.return_value
 
 
@@ -375,7 +376,7 @@ class TestMain:
              patch.object(train_module, "_load_class_names", side_effect=lambda *a: call_order.append("load_class_names") or CLASS_NAMES), \
              patch.object(train_module, "_download_dataset", side_effect=lambda *a: call_order.append("download_dataset")), \
              patch.object(train_module, "_write_data_yaml", side_effect=lambda *a: call_order.append("write_data_yaml")), \
-             patch.object(train_module, "_train_model", side_effect=lambda *a: call_order.append("train_model") or _make_mock_results()), \
+             patch.object(train_module, "_train_model", side_effect=lambda *a, **kw: call_order.append("train_model") or _make_mock_results()), \
              patch.object(train_module, "_export_onnx", side_effect=lambda *a: call_order.append("export_onnx") or "/tmp/best.onnx"), \
              patch.object(train_module, "_upload_artifacts", side_effect=lambda *a: call_order.append("upload_artifacts")), \
              patch.object(train_module.gcs, "Client"):
