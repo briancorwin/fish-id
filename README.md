@@ -202,7 +202,7 @@ Verify the build ran after your first merge:
 
 ```bash
 gcloud artifacts docker images list \
-  ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/fish-id \
+  ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/fish-id-train \
   --filter="tags:latest"
 ```
 
