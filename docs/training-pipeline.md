@@ -140,6 +140,8 @@ lr0: 0.001
 
 **`scripts/run-pipeline-local.py`** runs the pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). Accepts the same env vars and `--image` flag as `trigger-training.py`.
 
+CustomJob submission is always skipped — this script tests pipeline graph wiring only, not training.
+
 ```bash
 export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
@@ -147,12 +149,6 @@ export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
 export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 
 python scripts/run-pipeline-local.py
-```
-
-Set `SHORT_CIRCUIT=true` to skip CustomJob submission and test graph wiring only — no training cost incurred:
-
-```bash
-SHORT_CIRCUIT=true python scripts/run-pipeline-local.py
 ```
 
 ---

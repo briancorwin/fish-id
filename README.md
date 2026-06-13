@@ -311,4 +311,4 @@ source scripts/.venv/bin/activate
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds via Cloud Build, and deploys to Cloud Run. Use to deploy a model retrieved from the training pipeline. |
 | `update-dataset.py` | Exports a Roboflow dataset version in YOLO format and syncs images and labels to the GCS training bucket. Requires `ROBOFLOW_API_KEY` env var. |
 | `trigger-training.py` | Submits a Vertex AI PipelineJob using the compiled pipeline template and training image from GCS. Requires `GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, and `MODEL_BUCKET` env vars. |
-| `run-pipeline-local.py` | Runs the training pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). Set `SHORT_CIRCUIT=true` to skip CustomJob submission and test graph wiring only. Same env vars as `trigger-training.py`. |
+| `run-pipeline-local.py` | Runs the training pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). Always skips CustomJob submission — graph wiring test only. Same env vars as `trigger-training.py`. |
