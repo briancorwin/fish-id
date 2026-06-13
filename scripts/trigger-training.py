@@ -29,6 +29,11 @@ def main() -> None:
         "--image",
         help="Training container image URI. Defaults to the :latest tag in Artifact Registry.",
     )
+    parser.add_argument(
+        "--cpu-only",
+        action="store_true",
+        help="Run on CPU only — omits GPU accelerator spec. Useful when GPU quota is unavailable.",
+    )
     args = parser.parse_args()
 
     project = os.environ["GCP_PROJECT_ID"]
@@ -49,6 +54,7 @@ def main() -> None:
     print(f"  Training image:  {training_image}")
     print(f"  Training bucket: {training_bucket}")
     print(f"  Model bucket:    {model_bucket}")
+    print(f"  GPU:             {'no (CPU only)' if args.cpu_only else 'yes (L4)'}")
 
     aiplatform.init(project=project, location=region)
     pipeline_job = aiplatform.PipelineJob(
@@ -62,6 +68,7 @@ def main() -> None:
             "model_bucket": model_bucket,
             "training_image": training_image,
             "run_id": run_id,
+            "cpu_only": args.cpu_only,
         },
         enable_caching=False,
     )

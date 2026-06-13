@@ -20,7 +20,7 @@ def run_training_job(
     run_id: str,
     training_bucket: str,
     model_bucket: str,
-    machine_type: str,
+    cpu_only: bool = False,
 ) -> None:
     import logging  # noqa: PLC0415 — required inside KFP component body
     import os  # noqa: PLC0415
@@ -36,24 +36,23 @@ def run_training_job(
     from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
     aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
+    machine_spec: dict = {"machine_type": "n4-standard-4"}
+    if not cpu_only:
+        machine_spec["accelerator_type"] = "NVIDIA_L4"
+        machine_spec["accelerator_count"] = 1
     job = aiplatform.CustomJob(
         display_name=f"fish-id-train-{run_id}",
         worker_pool_specs=[
             {
-                "machine_spec": {
-                    "machine_type": machine_type,
-                    "accelerator_type": "NVIDIA_TESLA_T4",
-                    "accelerator_count": 1,
-                },
+                "machine_spec": machine_spec,
                 "replica_count": 1,
-                "container_spec": {
+                "container_spec": { 
                     "image_uri": training_image,
                     "env": [
                         {"name": "RUN_ID", "value": run_id},
                         {"name": "TRAINING_BUCKET", "value": training_bucket},
                         {"name": "MODEL_BUCKET", "value": model_bucket},
                         {"name": "CONTAINER_IMAGE", "value": training_image},
-                        {"name": "MACHINE_TYPE", "value": machine_type},
                     ],
                 },
             }
@@ -73,7 +72,7 @@ def fish_id_training_pipeline(
     model_bucket: str,
     training_image: str,
     run_id: str,
-    machine_type: str = "n1-standard-4",
+    cpu_only: bool = False,
 ) -> None:
     run_training_job(
         project=project,
@@ -82,7 +81,7 @@ def fish_id_training_pipeline(
         run_id=run_id,
         training_bucket=training_bucket,
         model_bucket=model_bucket,
-        machine_type=machine_type,
+        cpu_only=cpu_only,
     )
 
 

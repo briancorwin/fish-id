@@ -77,6 +77,8 @@ pip install -r tests/requirements.txt
 
 ### Making Changes
 
+Always ask the user for confirmation before committing. Never commit automatically after making changes.
+
 Work entirely inside the worktree directory. Commit regularly with clear messages:
 
 ```bash
@@ -110,6 +112,8 @@ Do not proceed if any tests fail. Fix failures before opening a PR.
 ---
 
 ### Opening a PR
+
+Always ask the user for confirmation before opening a PR. Never open one automatically after tests pass.
 
 Once the work is ready, open a PR using the GitHub CLI:
 
