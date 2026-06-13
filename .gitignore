@@ -242,3 +242,6 @@ frontend/.runtimeconfig.json
 
 # Claude Code
 .claude/
+
+# KFP local runner outputs
+local_outputs/

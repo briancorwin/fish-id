@@ -138,30 +138,21 @@ lr0: 0.001
 
 ### KFP Local Runner
 
-The pipeline can be run locally without Vertex AI using the KFP local runner (KFP >= 2.7):
+**`scripts/run-pipeline-local.py`** runs the pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). Accepts the same env vars and `--image` flag as `trigger-training.py`.
 
-```python
-from kfp.local import init, SubprocessRunner
-init(runner=SubprocessRunner(use_venv=True))
+```bash
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-central1
+export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
+export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 
-from pipeline.pipeline import fish_id_training_pipeline
-fish_id_training_pipeline(
-    run_id="run-test-local",
-    training_bucket="my-project-fish-id-training",
-    model_bucket="my-project-fish-id-models",
-    project="my-gcp-project",
-    region="us-central1",
-    training_image="...",
-)
+python scripts/run-pipeline-local.py
 ```
 
-### Colab Short-Circuits
+Set `SHORT_CIRCUIT=true` to skip CustomJob submission and test graph wiring only — no training cost incurred:
 
-Set `SHORT_CIRCUIT=true` before running to skip CustomJob submission and run a minimal inline training pass instead. Useful for verifying pipeline graph and data flow without incurring training cost.
-
-```python
-import os
-os.environ["SHORT_CIRCUIT"] = "true"
+```bash
+SHORT_CIRCUIT=true python scripts/run-pipeline-local.py
 ```
 
 ---

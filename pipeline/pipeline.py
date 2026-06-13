@@ -23,11 +23,17 @@ def run_training_job(
     machine_type: str,
 ) -> None:
     import logging  # noqa: PLC0415 — required inside KFP component body
-    from google.cloud import aiplatform  # noqa: PLC0415
-    from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
+    import os  # noqa: PLC0415
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
+
+    if os.environ.get("SHORT_CIRCUIT", "").lower() == "true":
+        logger.info("SHORT_CIRCUIT=true — skipping CustomJob submission for run %s", run_id)
+        return
+
+    from google.cloud import aiplatform  # noqa: PLC0415
+    from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
     aiplatform.init(project=project, location=region)
     job = aiplatform.CustomJob(
