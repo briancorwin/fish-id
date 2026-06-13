@@ -22,11 +22,15 @@ jobs:
           cache: pip
           cache-dependency-path: |
             app/requirements.txt
+            training/requirements.txt
+            pipeline/requirements.txt
             tests/requirements.txt
 
       - name: Install dependencies
         run: |
           pip install -r app/requirements.txt
+          pip install -r training/requirements.txt
+          pip install -r pipeline/requirements.txt
           pip install -r tests/requirements.txt
           pip install pylint
 

@@ -11,8 +11,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Pre-download base weights to avoid runtime egress to ultralytics.com
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
-COPY training/configs/ /app/configs/
+COPY training/config.yaml /app/config.yaml
 COPY training/train.py /app/train.py
-COPY training/eval.py /app/eval.py
 
-ENTRYPOINT ["sh", "-c", "case \"$JOB_MODE\" in eval) python /app/eval.py ;; train) python /app/train.py ;; *) echo 'JOB_MODE must be train or eval' >&2; exit 1 ;; esac"]
+ENTRYPOINT ["python", "/app/train.py"]

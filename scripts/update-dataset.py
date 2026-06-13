@@ -24,6 +24,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 
 def _rsync_to_gcs(local_dir: Path, gcs_prefix: str) -> None:
     cmd = ["gsutil", "-m", "rsync", "-r", str(local_dir), gcs_prefix]
@@ -90,7 +92,20 @@ def main() -> None:
         _rsync_to_gcs(dirs["val images"],   f"{gcs_base}/images/val/")
         _rsync_to_gcs(dirs["val labels"],   f"{gcs_base}/labels/val/")
 
+        # Step 3: Upload class names extracted from Roboflow data.yaml
+        print("Step 3: Uploading class_names.txt...")
+        data_yaml_path = export_dir / "data.yaml"
+        with open(data_yaml_path) as f:
+            data_yaml = yaml.safe_load(f)
+        class_names = data_yaml.get("names", [])
+        class_names_file = tmp_path / "class_names.txt"
+        class_names_file.write_text("\n".join(class_names) + "\n")
+        cmd = ["gsutil", "cp", str(class_names_file), f"{gcs_base}/class_names.txt"]
+        print(f"  {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
+
     print(f"\nDone. Dataset synced to gs://{args.bucket}/")
+    print(f"  Classes ({len(class_names)}): {', '.join(class_names)}")
 
 
 if __name__ == "__main__":

@@ -9,8 +9,9 @@ scripts/trigger-training.py
   → submits Vertex AI PipelineJob
     → Vertex AI Pipeline (KFP v2): fish-id-training-pipeline
         └─ run_training_job: Submit Vertex AI CustomJob
-               Reads: gs://{PROJECT_ID}-fish-id-training/images/ + labels/
-               Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
+               Reads: gs://{PROJECT_ID}-fish-id-training/images/ + labels/ + class_names.txt
+               Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx + metadata.json
+                       gs://{PROJECT_ID}-fish-id-models/fish-id.onnx  (production serving path)
 ```
 
 The trained ONNX is manually retrieved from GCS and deployed via `scripts/deploy-app.sh`.
@@ -54,6 +55,7 @@ Uses `gsutil -m rsync` without `-d` — files are never deleted from the pool. R
 
 ```
 {PROJECT_ID}-fish-id-training/
+├── class_names.txt     # newline-separated class names, written by update-dataset.py
 ├── images/
 │   ├── train/
 │   └── val/
@@ -71,7 +73,8 @@ Uses `gsutil -m rsync` without `-d` — files are never deleted from the pool. R
 │   └── fish-id-training-pipeline.json   # compiled KFP pipeline template
 └── runs/
     ├── run-2026-06-05-143000/
-    │   └── fish-id.onnx
+    │   ├── fish-id.onnx
+    │   └── metadata.json
     └── ...
 ```
 
@@ -127,10 +130,13 @@ lr0: 0.001
 
 **Training script behavior (`train.py`):**
 1. Read `config.yaml` from the container filesystem
-2. Download all images + labels from GCS (`{TRAINING_BUCKET}/images/` and `labels/`) to `/tmp/dataset/`
-3. `YOLO(config["model"]).train(data=..., **params)`
-4. Export best checkpoint to ONNX
-5. Upload `fish-id.onnx` to `gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/`
+2. Download `class_names.txt` from `{TRAINING_BUCKET}`
+3. Download all images + labels from GCS (`{TRAINING_BUCKET}/images/` and `labels/`) to `/tmp/dataset/`
+4. Write `/tmp/dataset/data.yaml` from class names
+5. `YOLO(config["model"]).train(data=..., **params)`
+6. Export best checkpoint to ONNX
+7. Upload `fish-id.onnx` and `metadata.json` to `gs://{MODEL_BUCKET}/runs/run-{R}/`
+8. Overwrite `gs://{MODEL_BUCKET}/fish-id.onnx` (production serving path)
 
 ---
 
@@ -138,30 +144,15 @@ lr0: 0.001
 
 ### KFP Local Runner
 
-The pipeline can be run locally without Vertex AI using the KFP local runner (KFP >= 2.7):
+**`scripts/run-pipeline-local.py`** runs the pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). CustomJob submission is always skipped — this script tests pipeline graph wiring only, not training.
 
-```python
-from kfp.local import init, SubprocessRunner
-init(runner=SubprocessRunner(use_venv=True))
+```bash
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-central1
+export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
+export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 
-from pipeline.pipeline import fish_id_training_pipeline
-fish_id_training_pipeline(
-    run_id="run-test-local",
-    training_bucket="my-project-fish-id-training",
-    model_bucket="my-project-fish-id-models",
-    project="my-gcp-project",
-    region="us-central1",
-    training_image="...",
-)
-```
-
-### Colab Short-Circuits
-
-Set `SHORT_CIRCUIT=true` before running to skip CustomJob submission and run a minimal inline training pass instead. Useful for verifying pipeline graph and data flow without incurring training cost.
-
-```python
-import os
-os.environ["SHORT_CIRCUIT"] = "true"
+python scripts/run-pipeline-local.py
 ```
 
 ---

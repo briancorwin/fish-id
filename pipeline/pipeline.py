@@ -23,11 +23,17 @@ def run_training_job(
     machine_type: str,
 ) -> None:
     import logging  # noqa: PLC0415 — required inside KFP component body
-    from google.cloud import aiplatform  # noqa: PLC0415
-    from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
+    import os  # noqa: PLC0415
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
+
+    if os.environ.get("SHORT_CIRCUIT", "").lower() == "true":
+        logger.info("SHORT_CIRCUIT=true — skipping CustomJob submission for run %s", run_id)
+        return
+
+    from google.cloud import aiplatform  # noqa: PLC0415
+    from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
     aiplatform.init(project=project, location=region)
     job = aiplatform.CustomJob(
@@ -42,8 +48,6 @@ def run_training_job(
                         {"name": "RUN_ID", "value": run_id},
                         {"name": "TRAINING_BUCKET", "value": training_bucket},
                         {"name": "MODEL_BUCKET", "value": model_bucket},
-                        {"name": "GCP_PROJECT_ID", "value": project},
-                        {"name": "GCP_REGION", "value": region},
                         {"name": "CONTAINER_IMAGE", "value": training_image},
                         {"name": "MACHINE_TYPE", "value": machine_type},
                     ],
