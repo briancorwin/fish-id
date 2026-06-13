@@ -54,7 +54,7 @@ def main() -> None:
     print(f"  Training image:  {training_image}")
     print(f"  Training bucket: {training_bucket}")
     print(f"  Model bucket:    {model_bucket}")
-    print(f"  GPU:             {'no (CPU only)' if args.cpu_only else 'yes (L4)'}")
+    print(f"  GPU:             {'no (CPU only)' if args.cpu_only else 'yes (T4)'}")
 
     aiplatform.init(project=project, location=region)
     pipeline_job = aiplatform.PipelineJob(

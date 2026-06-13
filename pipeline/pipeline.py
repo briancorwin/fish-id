@@ -6,7 +6,7 @@ from kfp import compiler, dsl
 from kfp.dsl import component
 
 _logger = logging.getLogger(__name__)
-_BASE_IMAGE = "python:3.11-slim"
+_BASE_IMAGE = "python:3.12-slim"
 
 
 @component(
@@ -36,9 +36,9 @@ def run_training_job(
     from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
     aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
-    machine_spec: dict = {"machine_type": "n4-standard-4"}
+    machine_spec: dict = {"machine_type": "n1-standard-4"}
     if not cpu_only:
-        machine_spec["accelerator_type"] = "NVIDIA_L4"
+        machine_spec["accelerator_type"] = "NVIDIA_TESLA_T4"
         machine_spec["accelerator_count"] = 1
     job = aiplatform.CustomJob(
         display_name=f"fish-id-train-{run_id}",
