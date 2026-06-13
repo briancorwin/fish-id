@@ -138,9 +138,7 @@ lr0: 0.001
 
 ### KFP Local Runner
 
-**`scripts/run-pipeline-local.py`** runs the pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). Accepts the same env vars and `--image` flag as `trigger-training.py`.
-
-CustomJob submission is always skipped — this script tests pipeline graph wiring only, not training.
+**`scripts/run-pipeline-local.py`** runs the pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). CustomJob submission is always skipped — this script tests pipeline graph wiring only, not training.
 
 ```bash
 export GCP_PROJECT_ID=your-project-id

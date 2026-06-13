@@ -48,8 +48,6 @@ def run_training_job(
                         {"name": "RUN_ID", "value": run_id},
                         {"name": "TRAINING_BUCKET", "value": training_bucket},
                         {"name": "MODEL_BUCKET", "value": model_bucket},
-                        {"name": "GCP_PROJECT_ID", "value": project},
-                        {"name": "GCP_REGION", "value": region},
                         {"name": "CONTAINER_IMAGE", "value": training_image},
                         {"name": "MACHINE_TYPE", "value": machine_type},
                     ],
