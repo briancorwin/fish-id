@@ -35,7 +35,7 @@ def run_training_job(
     from google.cloud import aiplatform  # noqa: PLC0415
     from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
 
-    aiplatform.init(project=project, location=region)
+    aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
     job = aiplatform.CustomJob(
         display_name=f"fish-id-train-{run_id}",
         worker_pool_specs=[
