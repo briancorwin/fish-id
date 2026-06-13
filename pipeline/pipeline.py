@@ -21,6 +21,7 @@ def run_training_job(
     training_bucket: str,
     model_bucket: str,
     machine_type: str,
+    scheduling_strategy: str = "ON_DEMAND",
 ) -> None:
     import logging  # noqa: PLC0415 — required inside KFP component body
     import os  # noqa: PLC0415
@@ -59,9 +60,10 @@ def run_training_job(
             }
         ],
     )
+    strategy = Scheduling.Strategy[scheduling_strategy]
     training_sa = f"fish-id-training-sa@{project}.iam.gserviceaccount.com"
-    logger.info("Submitting training job fish-id-train-%s", run_id)
-    job.run(sync=True, service_account=training_sa, scheduling_strategy=Scheduling.Strategy.SPOT)
+    logger.info("Submitting training job fish-id-train-%s with strategy %s", run_id, scheduling_strategy)
+    job.run(sync=True, service_account=training_sa, scheduling_strategy=strategy)
     logger.info("Training job completed: %s", job.resource_name)
 
 
@@ -74,6 +76,7 @@ def fish_id_training_pipeline(
     training_image: str,
     run_id: str,
     machine_type: str = "n1-standard-4",
+    scheduling_strategy: str = "ON_DEMAND",
 ) -> None:
     run_training_job(
         project=project,
@@ -83,6 +86,7 @@ def fish_id_training_pipeline(
         training_bucket=training_bucket,
         model_bucket=model_bucket,
         machine_type=machine_type,
+        scheduling_strategy=scheduling_strategy,
     )
 
 
