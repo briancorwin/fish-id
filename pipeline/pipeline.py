@@ -40,7 +40,11 @@ def run_training_job(
         display_name=f"fish-id-train-{run_id}",
         worker_pool_specs=[
             {
-                "machine_spec": {"machine_type": machine_type},
+                "machine_spec": {
+                    "machine_type": machine_type,
+                    "accelerator_type": "NVIDIA_TESLA_T4",
+                    "accelerator_count": 1,
+                },
                 "replica_count": 1,
                 "container_spec": {
                     "image_uri": training_image,
@@ -69,7 +73,7 @@ def fish_id_training_pipeline(
     model_bucket: str,
     training_image: str,
     run_id: str,
-    machine_type: str = "n1-highmem-4",
+    machine_type: str = "n1-standard-4",
 ) -> None:
     run_training_job(
         project=project,
