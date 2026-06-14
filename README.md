@@ -180,6 +180,7 @@ The deploy workflow resolves `fish-id.onnx` from the `production` alias in Verte
 gcloud ai models upload \
   --display-name=fish-id \
   --artifact-uri=gs://${GCP_PROJECT_ID}-fish-id-models/runs/<run-id>/ \
+  --container-image-uri=us-docker.pkg.dev/vertex-ai/prediction/onnx-cpu.1-14:latest \
   --version-aliases=latest,production \
   --region=${GCP_REGION} \
   --project=${GCP_PROJECT_ID}

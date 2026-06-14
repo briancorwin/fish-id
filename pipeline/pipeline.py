@@ -49,6 +49,10 @@ def register_model(
     upload_kwargs: dict = dict(
         display_name="fish-id",
         artifact_uri=artifact_uri,
+        # Required by the API but never used: we serve from Cloud Run, not Vertex AI.
+        # The Cloud Run image URI would be more accurate but isn't knowable here —
+        # it's built by the deploy workflow that runs *after* this step completes.
+        serving_container_image_uri="us-docker.pkg.dev/vertex-ai/prediction/onnx-cpu.1-14:latest",
         is_default_version=True,
         version_aliases=["latest", "production"],
         version_description=run_id,
