@@ -45,6 +45,7 @@ def main() -> None:
     region = os.environ["GCP_REGION"]
     training_bucket = os.environ["TRAINING_BUCKET"]
     model_bucket = os.environ["MODEL_BUCKET"]
+    github_repo = os.environ["GITHUB_REPO"]
 
     if args.image:
         training_image = args.image
@@ -71,6 +72,9 @@ def main() -> None:
             "model_bucket": model_bucket,
             "training_image": training_image,
             "run_id": run_id,
+            "project": project,
+            "region": region,
+            "github_repo": github_repo,
             "cpu_only": args.cpu_only,
         },
         enable_caching=False,
