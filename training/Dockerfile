@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 # Pre-download base weights to avoid runtime egress to ultralytics.com
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 
+ARG IMAGE_TAG=unknown
+RUN echo "${IMAGE_TAG}" > /app/image_tag.txt
+
 COPY training/config.yaml /app/config.yaml
 COPY training/train.py /app/train.py
 

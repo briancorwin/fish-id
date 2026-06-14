@@ -39,9 +39,11 @@ jobs:
 
       - name: Build training image
         run: |
+          IMAGE=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}
           docker build \
             -f training/Dockerfile \
-            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }} \
+            --build-arg IMAGE_TAG=${IMAGE} \
+            -t ${IMAGE} \
             .
 
       - name: Push training image
