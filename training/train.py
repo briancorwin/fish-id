@@ -18,13 +18,14 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _train_model(config: dict, workers: int, data_yaml_path: str):
+def _train_model(config: dict, workers: int, data_yaml_path: str) -> YOLO:
     _logger.info(
         "[train] starting YOLO training: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
         config["model"], config["epochs"], config["imgsz"], config["batch"],
         config["optimizer"], config["lr0"], workers,
     )
-    results = YOLO(config["model"]).train(
+    model = YOLO(config["model"])
+    model.train(
         data=data_yaml_path,
         epochs=config["epochs"],
         imgsz=config["imgsz"],
@@ -32,13 +33,14 @@ def _train_model(config: dict, workers: int, data_yaml_path: str):
         optimizer=config["optimizer"],
         lr0=config["lr0"],
         workers=workers,
+        cache=False,
     )
-    _logger.info("[train] YOLO training finished. save_dir=%s", results.save_dir)
-    return results
+    _logger.info("[train] YOLO training finished. save_dir=%s", model.trainer.save_dir)
+    return model
 
 
-def _export_onnx(results) -> str:
-    best_pt = str(results.save_dir / "weights/best.pt")
+def _export_onnx(model: YOLO) -> str:
+    best_pt = str(model.trainer.save_dir / "weights/best.pt")
     _logger.info("[train] exporting ONNX from %s", best_pt)
     best_model = YOLO(best_pt)
     best_model.export(format="onnx")
@@ -47,7 +49,8 @@ def _export_onnx(results) -> str:
     return onnx_path
 
 
-def _build_metadata(run_id: str, config: dict, results, duration_seconds: float) -> dict:
+def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float) -> dict:
+    trainer = model.trainer
     _logger.info("[train] building metadata for run_id=%s duration=%.1fs", run_id, duration_seconds)
     metadata = {
         "run_id": run_id,
@@ -56,7 +59,7 @@ def _build_metadata(run_id: str, config: dict, results, duration_seconds: float)
         "base_weights": config["model"],
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "duration_seconds": duration_seconds,
-        "epochs_completed": results.epoch + 1,
+        "epochs_completed": trainer.epoch + 1,
         "training_args": {
             "epochs": config["epochs"],
             "imgsz": config["imgsz"],
@@ -64,8 +67,8 @@ def _build_metadata(run_id: str, config: dict, results, duration_seconds: float)
             "optimizer": config["optimizer"],
             "lr0": config["lr0"],
         },
-        "final_train_loss": float(results.results_dict.get("train/box_loss", 0.0))
-        if hasattr(results, "results_dict")
+        "final_train_loss": float(trainer.metrics.get("train/box_loss", 0.0))
+        if hasattr(trainer, "metrics")
         else None,
         "machine_type": os.environ.get("MACHINE_TYPE", "unknown"),
     }
@@ -73,7 +76,7 @@ def _build_metadata(run_id: str, config: dict, results, duration_seconds: float)
     return metadata
 
 
-def _upload_artifacts(storage_client, model_bucket: str, run_id: str, onnx_path: str, metadata: dict) -> None:
+def _upload_artifacts(storage_client: gcs.Client, model_bucket: str, run_id: str, onnx_path: str, metadata: dict) -> None:
     bucket = storage_client.bucket(model_bucket)
 
     run_onnx_dest = f"runs/{run_id}/fish-id.onnx"
@@ -110,8 +113,8 @@ def main() -> None:
     training_bucket = parsed.training_bucket
     model_bucket = parsed.model_bucket
 
-    cpu_count = int(float(os.environ.get("AIP_REPLICA_CPU_CORES", 0))) or os.cpu_count() or 1
-    _logger.info("[train] cpu_count=%d (AIP_REPLICA_CPU_CORES=%s)", cpu_count, os.environ.get("AIP_REPLICA_CPU_CORES", "unset"))
+    cpu_count = os.cpu_count() or 1
+    _logger.info("[train] cpu_count=%d", cpu_count)
 
     os.environ["OMP_NUM_THREADS"] = str(cpu_count)
     os.environ["MKL_NUM_THREADS"] = str(cpu_count)
@@ -132,15 +135,15 @@ def main() -> None:
 
     _logger.info("[train] starting training (workers=%d)", cpu_count)
     start = time.time()
-    results = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path)
+    model = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path)
     duration = time.time() - start
     _logger.info("[train] training complete in %.1f seconds", duration)
 
     _logger.info("[train] exporting ONNX")
-    onnx_path = _export_onnx(results)
+    onnx_path = _export_onnx(model)
 
     _logger.info("[train] building metadata")
-    metadata = _build_metadata(run_id, config, results, duration)
+    metadata = _build_metadata(run_id, config, model, duration)
 
     _logger.info("[train] uploading artifacts to gs://%s", model_bucket)
     _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)

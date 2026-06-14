@@ -49,12 +49,13 @@ CONFIG_FIXTURE = {
 CONFIG_YAML = "model: yolov8n.pt\nepochs: 5\nimgsz: 640\nbatch: 16\noptimizer: AdamW\nlr0: 0.001\n"
 
 
-def _make_mock_results():
-    r = MagicMock()
-    r.epoch = 49
-    r.save_dir = Path("/tmp/runs/train/exp")
-    r.results_dict = {"train/box_loss": 0.123}
-    return r
+def _make_mock_model():
+    """Return a mock YOLO model whose .trainer mirrors the real post-train shape."""
+    model = MagicMock()
+    model.trainer.epoch = 49
+    model.trainer.save_dir = Path("/tmp/runs/train/exp")
+    model.trainer.metrics = {"train/box_loss": 0.123}
+    return model
 
 
 # ---------------------------------------------------------------------------
@@ -118,12 +119,13 @@ class TestTrainModel:
             optimizer="AdamW",
             lr0=0.001,
             workers=4,
+            cache=False,
         )
 
-    def test_returns_train_results(self):
+    def test_returns_yolo_model(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
             result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
-        assert result is mock_yolo.return_value.train.return_value
+        assert result is mock_yolo.return_value
 
 
 # ---------------------------------------------------------------------------
@@ -132,21 +134,21 @@ class TestTrainModel:
 
 class TestExportOnnx:
     def test_yolo_loaded_with_best_pt_path(self):
-        results = _make_mock_results()
+        model = _make_mock_model()
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._export_onnx(results)
+            train_module._export_onnx(model)
         mock_yolo.assert_called_once_with("/tmp/runs/train/exp/weights/best.pt")
 
     def test_export_called_with_onnx_format(self):
-        results = _make_mock_results()
+        model = _make_mock_model()
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._export_onnx(results)
+            train_module._export_onnx(model)
         mock_yolo.return_value.export.assert_called_once_with(format="onnx")
 
     def test_returns_onnx_path(self):
-        results = _make_mock_results()
+        model = _make_mock_model()
         with patch.object(train_module, "YOLO"):
-            path = train_module._export_onnx(results)
+            path = train_module._export_onnx(model)
         assert path == "/tmp/runs/train/exp/weights/best.onnx"
 
 
@@ -156,7 +158,7 @@ class TestExportOnnx:
 
 class TestArtifactUpload:
     def _make_metadata(self, run_id="run-001"):
-        return train_module._build_metadata(run_id, CONFIG_FIXTURE, _make_mock_results(), 120.0)
+        return train_module._build_metadata(run_id, CONFIG_FIXTURE, _make_mock_model(), 120.0)
 
     def _run_upload(self, tmp_path, run_id="run-001"):
         mock_bucket = MagicMock()
@@ -197,7 +199,7 @@ class TestArtifactUpload:
     def test_metadata_content_has_correct_fields(self):
         metadata = self._make_metadata("run-abc")
         assert metadata["run_id"] == "run-abc"
-        assert metadata["epochs_completed"] == 50  # results.epoch + 1
+        assert metadata["epochs_completed"] == 50  # trainer.epoch + 1
         assert metadata["model_architecture"] == "yolov8n"
         assert metadata["base_weights"] == "yolov8n.pt"
         assert "trained_at" in metadata
@@ -215,7 +217,7 @@ class TestMain:
     def _enter_base_patches(self, stack, **overrides):
         specs = {
             "_load_config": dict(return_value=CONFIG_FIXTURE),
-            "_train_model": dict(return_value=_make_mock_results()),
+            "_train_model": dict(return_value=_make_mock_model()),
             "_export_onnx": dict(return_value="/tmp/best.onnx"),
             "_upload_artifacts": {},
         }
@@ -229,7 +231,7 @@ class TestMain:
         call_order = []
 
         with patch.object(train_module, "_load_config", side_effect=lambda: call_order.append("load_config") or CONFIG_FIXTURE), \
-             patch.object(train_module, "_train_model", side_effect=lambda *a, **kw: call_order.append("train_model") or _make_mock_results()), \
+             patch.object(train_module, "_train_model", side_effect=lambda *a, **kw: call_order.append("train_model") or _make_mock_model()), \
              patch.object(train_module, "_export_onnx", side_effect=lambda *a: call_order.append("export_onnx") or "/tmp/best.onnx"), \
              patch.object(train_module, "_upload_artifacts", side_effect=lambda *a: call_order.append("upload_artifacts")), \
              patch.object(train_module.gcs, "Client"):
