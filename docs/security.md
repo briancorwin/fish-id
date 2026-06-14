@@ -59,7 +59,6 @@ The following secrets are stored in GitHub and injected as environment variables
 | `GCP_REGION` | Cloud Run / Artifact Registry region |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | WIF provider resource name (output of `terraform output`) |
 | `GCP_SERVICE_ACCOUNT` | CI/CD service account email (output of `terraform output`) |
-| `ONNX_MODEL_GCS_URI` | GCS path to the production model artifact |
 
 ---
 
@@ -91,17 +90,16 @@ Each service account in the training pipeline is scoped to only the permissions 
 
 | Service Account | Role | Scope |
 |---|---|---|
-| `fish-id-training-sa` (Vertex AI job containers) | `roles/storage.objectAdmin` | Training bucket |
-| | `roles/storage.objectCreator` | Models bucket |
-| | `roles/aiplatform.user` | Project |
-| `fish-id-workflows-sa` (Cloud Functions v2 trigger / Vertex AI Pipeline) | `roles/storage.objectAdmin` | Models bucket |
-| | `roles/secretmanager.secretAccessor` | `github-deploy-pat` secret only |
+| `fish-id-workflows-sa` (Vertex AI Pipeline components) | `roles/storage.objectAdmin` | Models bucket |
+| | `roles/storage.objectViewer` | Training bucket |
+| | `roles/secretmanager.secretAccessor` | `fish-id-github-deploy-token` secret only |
 | | `roles/aiplatform.user` + `roles/logging.logWriter` | Project |
-| `fish-id-cicd-sa` (GitHub Actions) | `roles/storage.objectAdmin` | Models bucket (for `training-image-latest.json`) |
+| `fish-id-cicd-sa` (GitHub Actions) | `roles/storage.objectAdmin` | Models bucket |
+| | `roles/aiplatform.viewer` | Project (list Model Registry versions to resolve `production` alias at deploy time) |
 
 ### Secret Manager
 
-The GitHub PAT (with `workflow` scope) used to trigger `workflow_dispatch` after model promotion is stored in **Secret Manager** (`github-deploy-pat`) and read by Cloud Workflows at execution time via the Secret Manager API. It is never written to source code, environment variables, or GitHub secrets.
+The GitHub PAT used to trigger `workflow_dispatch` on `deploy.yml` after each successful model registration is stored in **Secret Manager** (`fish-id-github-deploy-token`) and read by the `trigger_deploy` pipeline component at runtime via the Secret Manager API. It is never written to source code, environment variables, or GitHub secrets.
 
 ### Roboflow API Key
 
