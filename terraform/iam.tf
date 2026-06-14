@@ -84,34 +84,6 @@ resource "google_storage_bucket_iam_member" "cicd_model_writer" {
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
-# Training service account — used by Vertex AI CustomJob containers
-resource "google_service_account" "training" {
-  account_id   = "fish-id-training-sa"
-  display_name = "fish-id Training SA"
-  depends_on   = [google_project_service.apis["iam.googleapis.com"]]
-}
-
-# Training SA — read training images and labels
-resource "google_storage_bucket_iam_member" "training_training_bucket_reader" {
-  bucket = google_storage_bucket.training.name
-  role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.training.email}"
-}
-
-# Training SA — write trained model artifacts to the models bucket
-resource "google_storage_bucket_iam_member" "training_model_writer" {
-  bucket = google_storage_bucket.models.name
-  role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${google_service_account.training.email}"
-}
-
-# Training SA — submit Vertex AI custom jobs
-resource "google_project_iam_member" "training_aiplatform_user" {
-  project = var.project_id
-  role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_service_account.training.email}"
-}
-
 # Workflows service account — used by KFP pipeline components
 resource "google_service_account" "workflows" {
   account_id   = "fish-id-workflows-sa"
@@ -133,16 +105,16 @@ resource "google_project_iam_member" "workflows_aiplatform_user" {
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
+# Workflows SA — read training data (container components run under the pipeline SA, not training SA)
+resource "google_storage_bucket_iam_member" "workflows_training_bucket_reader" {
+  bucket = google_storage_bucket.training.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.workflows.email}"
+}
+
 # Workflows SA — write logs
 resource "google_project_iam_member" "workflows_log_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.workflows.email}"
-}
-
-# Workflows SA — act as the training SA when submitting Vertex AI CustomJobs
-resource "google_service_account_iam_member" "workflows_act_as_training" {
-  service_account_id = google_service_account.training.name
-  role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.workflows.email}"
 }
