@@ -45,7 +45,7 @@ jobs:
             echo "::error::fish-id model not found in Vertex AI Model Registry"
             exit 1
           fi
-          ARTIFACT_URI=$(gcloud ai models list-versions "$MODEL" \
+          ARTIFACT_URI=$(gcloud ai models list-version "$MODEL" \
             --project="${{ secrets.GCP_PROJECT_ID }}" \
             --region="${{ secrets.GCP_REGION }}" \
             --filter='versionAliases:production' \
