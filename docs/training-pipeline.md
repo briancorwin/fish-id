@@ -8,13 +8,16 @@
 scripts/trigger-training.py
   → submits Vertex AI PipelineJob
     → Vertex AI Pipeline (KFP v2): fish-id-training-pipeline
-        └─ run_training_job: Submit Vertex AI CustomJob
-               Reads: gs://{PROJECT_ID}-fish-id-training/images/ + labels/ + class_names.txt
-               Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx + metadata.json
-                       gs://{PROJECT_ID}-fish-id-models/fish-id.onnx  (production serving path)
+        ├─ run_training_job: Vertex AI CustomJob
+        │      Reads: gs://{PROJECT_ID}-fish-id-training/images/ + labels/ + class_names.txt
+        │      Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx + metadata.json
+        ├─ register_model: Vertex AI Model Registry
+        │      Registers artifact as "fish-id" with aliases "latest" and "production"
+        └─ trigger_deploy: GitHub API workflow_dispatch
+               Fires deploy.yml on main → Cloud Run redeploy with the new model
 ```
 
-The trained ONNX is manually retrieved from GCS and deployed via `scripts/deploy-app.sh`.
+Each successful training run automatically registers the model and triggers a production deploy. Manual retrieval and `deploy-app.sh` are only needed for out-of-band deploys.
 
 ---
 
@@ -68,7 +71,6 @@ Uses `gsutil -m rsync` without `-d` — files are never deleted from the pool. R
 
 ```
 {PROJECT_ID}-fish-id-models/
-├── fish-id.onnx                    # production serving path
 ├── pipeline/
 │   └── fish-id-training-pipeline.json   # compiled KFP pipeline template
 └── runs/
@@ -77,6 +79,8 @@ Uses `gsutil -m rsync` without `-d` — files are never deleted from the pool. R
     │   └── metadata.json
     └── ...
 ```
+
+The `production` serving artifact is tracked via the Vertex AI Model Registry (`production` alias), not a fixed GCS path. The deploy workflow resolves the artifact URI from the registry at deploy time.
 
 ---
 
@@ -89,11 +93,13 @@ export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
 export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
 export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
+export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
 python scripts/trigger-training.py
 ```
 
 Use `--image <uri>` to override the training container image (e.g. to pin a specific `:{SHA}` tag).
+Use `--cpu-only` to skip the GPU accelerator and run on a larger CPU machine instead.
 
 The run appears under **Vertex AI → Pipelines → Runs** in the Cloud Console.
 
@@ -127,6 +133,8 @@ lr0: 0.001
 | `project` | `my-gcp-project` | Env var `GCP_PROJECT_ID` |
 | `region` | `us-central1` | Env var `GCP_REGION` |
 | `training_image` | `...fish-id-train:latest` | Artifact Registry `:latest` tag |
+| `github_repo` | `briancorwin/fish-id` | Env var `GITHUB_REPO` |
+| `cpu_only` | `false` | `--cpu-only` flag (default: false) |
 
 **Training script behavior (`train.py`):**
 1. Read `config.yaml` from the container filesystem
@@ -136,7 +144,16 @@ lr0: 0.001
 5. `YOLO(config["model"]).train(data=..., **params)`
 6. Export best checkpoint to ONNX
 7. Upload `fish-id.onnx` and `metadata.json` to `gs://{MODEL_BUCKET}/runs/run-{R}/`
-8. Overwrite `gs://{MODEL_BUCKET}/fish-id.onnx` (production serving path)
+
+**`register_model` component:**
+- Registers `gs://{MODEL_BUCKET}/runs/{run_id}/` as the artifact URI in Vertex AI Model Registry
+- Display name: `"fish-id"`; version aliases: `"latest"`, `"production"`; `is_default_version=True`
+- If a `"fish-id"` model already exists, adds a new version (passes `parent_model`); otherwise creates the model
+
+**`trigger_deploy` component:**
+- Reads the GitHub PAT from Secret Manager secret `fish-id-github-deploy-token`
+- POSTs a `workflow_dispatch` event to `deploy.yml` on `main` via the GitHub API
+- The deploy workflow then pulls the `production`-aliased model from Vertex AI Registry and redeploys Cloud Run
 
 ---
 
@@ -148,9 +165,11 @@ lr0: 0.001
 - `roles/aiplatform.user` on project
 
 **`fish-id-workflows-sa`** (pipeline components):
-- `roles/aiplatform.user` on project (submit PipelineJobs and CustomJobs)
+- `roles/aiplatform.user` on project (submit PipelineJobs and CustomJobs, register models)
 - `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-models` bucket (pipeline root artifacts)
+- `roles/storage.objectViewer` on `{PROJECT_ID}-fish-id-training` bucket (read training data)
 - `roles/logging.logWriter` on project
+- `roles/secretmanager.secretAccessor` on `fish-id-github-deploy-token` secret (read GitHub PAT)
 
 **`fish-id-cicd-sa`** (GitHub Actions):
 - `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-models` bucket (write compiled pipeline JSON)
@@ -166,8 +185,16 @@ lr0: 0.001
 | `fish-id-training-sa` | `google_service_account` |
 | `fish-id-workflows-sa` | `google_service_account` |
 | IAM bindings for both SAs (see above) | `google_storage_bucket_iam_member`, `google_project_iam_member` |
+| `fish-id-github-deploy-token` | `google_secret_manager_secret` (shell only — populate manually after apply) |
+| `workflows_deploy_token` IAM binding | `google_secret_manager_secret_iam_member` |
 
-**API required in `apis.tf`:** `aiplatform.googleapis.com`
+**APIs required in `apis.tf`:** `aiplatform.googleapis.com`, `secretmanager.googleapis.com`
+
+**Post-`terraform apply` manual step** — populate the GitHub PAT secret (requires a PAT with `repo` scope or `actions:write`):
+
+```bash
+echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --data-file=-
+```
 
 ---
 
@@ -183,10 +210,9 @@ lr0: 0.001
 
 ---
 
-## Deferred (add back once the pipeline is working e2e)
+## Deferred
 
-- **Automated promotion + redeploy** — pipeline ONNX output is manually retrieved from GCS and deployed via `deploy-app.sh` for now
-- **Quality gates (Gate 1 + Gate 2)** — no eval or gating; every successful run produces an artifact
+- **Quality gates (Gate 1 + Gate 2)** — no eval or gating; every successful run is promoted to `production`
 - **Eval dataset + eval job** — removed for now
 - **Eventarc / Cloud Functions trigger** — pipeline is triggered manually only
 - **Multi-config support** — single `config.yaml` baked into the container
