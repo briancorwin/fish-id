@@ -18,67 +18,14 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _load_class_names(storage_client, training_bucket: str) -> list[str]:
-    _logger.info("[train] loading class_names.txt from gs://%s/class_names.txt", training_bucket)
-    bucket = storage_client.bucket(training_bucket)
-    blob = bucket.blob("class_names.txt")
-    data = blob.download_as_text()
-    names = [line.strip() for line in data.splitlines() if line.strip()]
-    _logger.info("[train] loaded %d class names: %s", len(names), names)
-    return names
-
-
-def _download_dataset(storage_client, training_bucket: str) -> None:
-    bucket = storage_client.bucket(training_bucket)
-    splits = [
-        ("images/train/", "/tmp/dataset/images/train/"),
-        ("images/val/",   "/tmp/dataset/images/val/"),
-        ("labels/train/", "/tmp/dataset/labels/train/"),
-        ("labels/val/",   "/tmp/dataset/labels/val/"),
-    ]
-    for gcs_prefix, local_dir in splits:
-        _logger.info("[train] downloading split %s -> %s", gcs_prefix, local_dir)
-        local_path = Path(local_dir)
-        local_path.mkdir(parents=True, exist_ok=True)
-        blobs = list(bucket.list_blobs(prefix=gcs_prefix))
-        _logger.info("[train] found %d blobs under gs://%s/%s", len(blobs), training_bucket, gcs_prefix)
-        for i, blob in enumerate(blobs):
-            filename = blob.name[len(gcs_prefix):]
-            if not filename:
-                continue
-            dest = str(local_path / filename)
-            _logger.info("[train] [%d/%d] downloading %s -> %s", i + 1, len(blobs), blob.name, dest)
-            try:
-                blob.download_to_filename(dest)
-            except Exception as exc:
-                _logger.error("[train] failed to download %s -> %s: %s", blob.name, dest, exc)
-                raise
-        _logger.info("[train] split %s download complete", gcs_prefix)
-
-
-def _write_data_yaml(class_names: list[str]) -> None:
-    _logger.info("[train] writing data.yaml with %d classes", len(class_names))
-    data_yaml = {
-        "path": "/tmp/dataset",
-        "train": "images/train",
-        "val": "images/val",
-        "nc": len(class_names),
-        "names": class_names,
-    }
-    Path("/tmp/dataset").mkdir(parents=True, exist_ok=True)
-    with open("/tmp/dataset/data.yaml", "w") as f:
-        yaml.dump(data_yaml, f)
-    _logger.info("[train] data.yaml written to /tmp/dataset/data.yaml")
-
-
-def _train_model(config: dict, workers: int):
+def _train_model(config: dict, workers: int, data_yaml_path: str):
     _logger.info(
         "[train] starting YOLO training: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
         config["model"], config["epochs"], config["imgsz"], config["batch"],
         config["optimizer"], config["lr0"], workers,
     )
     results = YOLO(config["model"]).train(
-        data="/tmp/dataset/data.yaml",
+        data=data_yaml_path,
         epochs=config["epochs"],
         imgsz=config["imgsz"],
         batch=config["batch"],
@@ -180,18 +127,12 @@ def main() -> None:
     storage_client = gcs.Client()
     _logger.info("[train] GCS client ready")
 
-    class_names = _load_class_names(storage_client, training_bucket)
-
-    _logger.info("[train] downloading dataset from gs://%s", training_bucket)
-    _download_dataset(storage_client, training_bucket)
-    _logger.info("[train] dataset download complete")
-
-    _logger.info("[train] writing data.yaml")
-    _write_data_yaml(class_names)
+    data_yaml_path = f"/gcs/{training_bucket}/data.yaml"
+    _logger.info("[train] data_yaml_path=%s", data_yaml_path)
 
     _logger.info("[train] starting training (workers=%d)", cpu_count)
     start = time.time()
-    results = _train_model(config, workers=cpu_count)
+    results = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path)
     duration = time.time() - start
     _logger.info("[train] training complete in %.1f seconds", duration)
 
