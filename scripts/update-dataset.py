@@ -92,15 +92,22 @@ def main() -> None:
         _rsync_to_gcs(dirs["val images"],   f"{gcs_base}/images/val/")
         _rsync_to_gcs(dirs["val labels"],   f"{gcs_base}/labels/val/")
 
-        # Step 3: Upload class names extracted from Roboflow data.yaml
-        print("Step 3: Uploading class_names.txt...")
-        data_yaml_path = export_dir / "data.yaml"
-        with open(data_yaml_path) as f:
-            data_yaml = yaml.safe_load(f)
-        class_names = data_yaml.get("names", [])
-        class_names_file = tmp_path / "class_names.txt"
-        class_names_file.write_text("\n".join(class_names) + "\n")
-        cmd = ["gsutil", "cp", str(class_names_file), f"{gcs_base}/class_names.txt"]
+        # Step 3: Upload data.yaml with GCS FUSE paths for direct use by the training container
+        print("Step 3: Uploading data.yaml...")
+        with open(export_dir / "data.yaml") as f:
+            roboflow_yaml = yaml.safe_load(f)
+        class_names = roboflow_yaml.get("names", [])
+        training_yaml = {
+            "path": f"/gcs/{args.bucket}",
+            "train": "images/train",
+            "val": "images/val",
+            "nc": len(class_names),
+            "names": class_names,
+        }
+        training_yaml_file = tmp_path / "data.yaml"
+        with open(training_yaml_file, "w") as f:
+            yaml.dump(training_yaml, f)
+        cmd = ["gsutil", "cp", str(training_yaml_file), f"{gcs_base}/data.yaml"]
         print(f"  {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
 

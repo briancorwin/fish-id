@@ -140,23 +140,6 @@ lr0: 0.001
 
 ---
 
-## Local Pipeline Testing
-
-### KFP Local Runner
-
-**`scripts/run-pipeline-local.py`** runs the pipeline locally via the KFP SubprocessRunner (no Vertex AI Pipelines). CustomJob submission is always skipped — this script tests pipeline graph wiring only, not training.
-
-```bash
-export GCP_PROJECT_ID=your-project-id
-export GCP_REGION=us-central1
-export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
-export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
-
-python scripts/run-pipeline-local.py
-```
-
----
-
 ## IAM
 
 **`fish-id-training-sa`** (Vertex AI CustomJob containers):

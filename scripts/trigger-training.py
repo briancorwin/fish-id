@@ -3,7 +3,12 @@
 Manually submit a Vertex AI training pipeline run.
 
 Usage:
-    python scripts/trigger-training.py [--image <image-uri>]
+    python scripts/trigger-training.py [--image <image-uri>] [--cpu-only]
+
+Flags:
+    --image      Training container image URI. Defaults to :latest in Artifact Registry.
+    --cpu-only   Run on CPU only (n4-standard-16, no GPU). Uses STANDARD scheduling
+                 strategy instead of SPOT. Useful when GPU quota is unavailable.
 
 Environment variables:
     GCP_PROJECT_ID   GCP project ID (required)
@@ -62,8 +67,6 @@ def main() -> None:
         template_path=pipeline_template_uri,
         pipeline_root=f"gs://{model_bucket}/pipeline-root",
         parameter_values={
-            "project": project,
-            "region": region,
             "training_bucket": training_bucket,
             "model_bucket": model_bucket,
             "training_image": training_image,

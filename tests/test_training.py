@@ -37,8 +37,6 @@ import train as train_module
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-CLASS_NAMES = ["Bass", "Bluegill"]
-
 CONFIG_FIXTURE = {
     "model": "yolov8n.pt",
     "epochs": 5,
@@ -57,12 +55,6 @@ def _make_mock_results():
     r.save_dir = Path("/tmp/runs/train/exp")
     r.results_dict = {"train/box_loss": 0.123}
     return r
-
-
-def _make_blob(name: str) -> MagicMock:
-    b = MagicMock()
-    b.name = name
-    return b
 
 
 # ---------------------------------------------------------------------------
@@ -84,50 +76,7 @@ class TestLoadConfig:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: _load_class_names
-# ---------------------------------------------------------------------------
-
-class TestLoadClassNames:
-    def test_returns_class_list(self):
-        mock_blob = MagicMock()
-        mock_blob.download_as_text.return_value = "Bass\nBluegill\n"
-        mock_bucket = MagicMock()
-        mock_bucket.blob.return_value = mock_blob
-        mock_client = MagicMock()
-        mock_client.bucket.return_value = mock_bucket
-
-        result = train_module._load_class_names(mock_client, "my-training-bucket")
-
-        assert result == ["Bass", "Bluegill"]
-
-    def test_strips_whitespace_and_blank_lines(self):
-        mock_blob = MagicMock()
-        mock_blob.download_as_text.return_value = "Bass\n  Bluegill  \n\nPerch\n"
-        mock_bucket = MagicMock()
-        mock_bucket.blob.return_value = mock_blob
-        mock_client = MagicMock()
-        mock_client.bucket.return_value = mock_bucket
-
-        result = train_module._load_class_names(mock_client, "my-training-bucket")
-
-        assert result == ["Bass", "Bluegill", "Perch"]
-
-    def test_reads_from_correct_gcs_path(self):
-        mock_blob = MagicMock()
-        mock_blob.download_as_text.return_value = "Bass\n"
-        mock_bucket = MagicMock()
-        mock_bucket.blob.return_value = mock_blob
-        mock_client = MagicMock()
-        mock_client.bucket.return_value = mock_bucket
-
-        train_module._load_class_names(mock_client, "my-training-bucket")
-
-        mock_client.bucket.assert_called_once_with("my-training-bucket")
-        mock_bucket.blob.assert_called_once_with("class_names.txt")
-
-
-# ---------------------------------------------------------------------------
-# Test 3: Config YAML on disk
+# Test 2: Config YAML on disk
 # ---------------------------------------------------------------------------
 
 class TestConfig:
@@ -147,110 +96,22 @@ class TestConfig:
 
 
 # ---------------------------------------------------------------------------
-# Test 4: _write_data_yaml
-# ---------------------------------------------------------------------------
-
-class TestWriteDataYaml:
-    def test_writes_correct_class_names_and_count(self):
-        buf = io.StringIO()
-        with patch("pathlib.Path.mkdir"), \
-             patch("builtins.open", create=True) as mock_open_:
-            mock_open_.return_value.__enter__ = lambda s: buf
-            mock_open_.return_value.__exit__ = MagicMock(return_value=False)
-            train_module._write_data_yaml(["Bass", "Bluegill"])
-        loaded = yaml.safe_load(buf.getvalue())
-        assert loaded["names"] == ["Bass", "Bluegill"]
-        assert loaded["nc"] == 2
-
-
-# ---------------------------------------------------------------------------
-# Test 5: _download_dataset
-# ---------------------------------------------------------------------------
-
-class TestDownloadDataset:
-    """_download_dataset lists all blobs in each split and downloads them."""
-
-    def _make_bucket_with_blobs(self):
-        blobs_by_prefix = {
-            "images/train/": [_make_blob("images/train/img001.jpg")],
-            "images/val/":   [_make_blob("images/val/img002.jpg")],
-            "labels/train/": [_make_blob("labels/train/img001.txt")],
-            "labels/val/":   [_make_blob("labels/val/img002.txt")],
-        }
-        mock_bucket = MagicMock()
-        mock_bucket.list_blobs.side_effect = lambda prefix: blobs_by_prefix.get(prefix, [])
-        mock_client = MagicMock()
-        mock_client.bucket.return_value = mock_bucket
-        return mock_client, mock_bucket, blobs_by_prefix
-
-    def test_all_four_splits_are_listed(self):
-        mock_client, mock_bucket, _ = self._make_bucket_with_blobs()
-        with patch("pathlib.Path.mkdir"):
-            train_module._download_dataset(mock_client, "my-training-bucket")
-        prefixes = {c.kwargs.get("prefix", c.args[0] if c.args else None)
-                    for c in mock_bucket.list_blobs.call_args_list}
-        assert prefixes == {"images/train/", "images/val/", "labels/train/", "labels/val/"}
-
-    def test_each_blob_downloaded(self):
-        mock_client, mock_bucket, blobs_by_prefix = self._make_bucket_with_blobs()
-        all_blobs = [b for blobs in blobs_by_prefix.values() for b in blobs]
-        with patch("pathlib.Path.mkdir"):
-            train_module._download_dataset(mock_client, "my-training-bucket")
-        for blob in all_blobs:
-            blob.download_to_filename.assert_called_once()
-
-    def test_correct_bucket_used(self):
-        mock_client, mock_bucket, _ = self._make_bucket_with_blobs()
-        with patch("pathlib.Path.mkdir"):
-            train_module._download_dataset(mock_client, "my-training-bucket")
-        mock_client.bucket.assert_called_with("my-training-bucket")
-
-    def test_empty_directory_blobs_skipped(self):
-        """Blobs whose name equals the prefix (directory placeholders) are skipped."""
-        mock_bucket = MagicMock()
-        dir_blob = _make_blob("images/train/")  # name == prefix → no filename
-        file_blob = _make_blob("images/train/img001.jpg")
-        mock_bucket.list_blobs.side_effect = lambda prefix: (
-            [dir_blob, file_blob] if prefix == "images/train/" else []
-        )
-        mock_client = MagicMock()
-        mock_client.bucket.return_value = mock_bucket
-
-        with patch("pathlib.Path.mkdir"):
-            train_module._download_dataset(mock_client, "my-training-bucket")
-
-        dir_blob.download_to_filename.assert_not_called()
-        file_blob.download_to_filename.assert_called_once()
-
-    def test_download_destination_path(self):
-        mock_bucket = MagicMock()
-        blob = _make_blob("images/train/img001.jpg")
-        mock_bucket.list_blobs.side_effect = lambda prefix: [blob] if prefix == "images/train/" else []
-        mock_client = MagicMock()
-        mock_client.bucket.return_value = mock_bucket
-
-        with patch("pathlib.Path.mkdir"):
-            train_module._download_dataset(mock_client, "my-training-bucket")
-
-        dest = blob.download_to_filename.call_args.args[0]
-        assert dest == "/tmp/dataset/images/train/img001.jpg"
-
-
-# ---------------------------------------------------------------------------
-# Test 6: _train_model
+# Test 3: _train_model
 # ---------------------------------------------------------------------------
 
 class TestTrainModel:
+    _DATA_YAML = "/gcs/my-training-bucket/data.yaml"
+
     def test_yolo_instantiated_with_model_from_config(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
         mock_yolo.assert_called_once_with("yolov8n.pt")
 
     def test_train_called_with_correct_hyperparams(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
         mock_yolo.return_value.train.assert_called_once_with(
-            data="/tmp/dataset/data.yaml",
+            data=self._DATA_YAML,
             epochs=5,
             imgsz=640,
             batch=16,
@@ -261,7 +122,7 @@ class TestTrainModel:
 
     def test_returns_train_results(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            result = train_module._train_model(CONFIG_FIXTURE, workers=4)
+            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
         assert result is mock_yolo.return_value.train.return_value
 
 
@@ -349,14 +210,11 @@ class TestArtifactUpload:
 # ---------------------------------------------------------------------------
 
 class TestMain:
-    _ENV = {"RUN_ID": "run-test-001", "TRAINING_BUCKET": "my-training-bucket", "MODEL_BUCKET": "my-model-bucket"}
+    _ARGV = ["train.py", "--run-id", "run-test-001", "--training-bucket", "my-training-bucket", "--model-bucket", "my-model-bucket"]
 
     def _enter_base_patches(self, stack, **overrides):
         specs = {
             "_load_config": dict(return_value=CONFIG_FIXTURE),
-            "_load_class_names": dict(return_value=CLASS_NAMES),
-            "_download_dataset": {},
-            "_write_data_yaml": {},
             "_train_model": dict(return_value=_make_mock_results()),
             "_export_onnx": dict(return_value="/tmp/best.onnx"),
             "_upload_artifacts": {},
@@ -367,30 +225,20 @@ class TestMain:
         return mocks
 
     def test_all_steps_called_in_order(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         call_order = []
 
         with patch.object(train_module, "_load_config", side_effect=lambda: call_order.append("load_config") or CONFIG_FIXTURE), \
-             patch.object(train_module, "_load_class_names", side_effect=lambda *a: call_order.append("load_class_names") or CLASS_NAMES), \
-             patch.object(train_module, "_download_dataset", side_effect=lambda *a: call_order.append("download_dataset")), \
-             patch.object(train_module, "_write_data_yaml", side_effect=lambda *a: call_order.append("write_data_yaml")), \
              patch.object(train_module, "_train_model", side_effect=lambda *a, **kw: call_order.append("train_model") or _make_mock_results()), \
              patch.object(train_module, "_export_onnx", side_effect=lambda *a: call_order.append("export_onnx") or "/tmp/best.onnx"), \
              patch.object(train_module, "_upload_artifacts", side_effect=lambda *a: call_order.append("upload_artifacts")), \
              patch.object(train_module.gcs, "Client"):
             train_module.main()
 
-        assert call_order == [
-            "load_config", "load_class_names", "download_dataset",
-            "write_data_yaml", "train_model", "export_onnx", "upload_artifacts",
-        ]
+        assert call_order == ["load_config", "train_model", "export_onnx", "upload_artifacts"]
 
     def test_run_id_passed_to_upload(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
@@ -398,28 +246,15 @@ class TestMain:
         _, _, run_id, _, _ = mocks["_upload_artifacts"].call_args.args
         assert run_id == "run-test-001"
 
-    def test_class_names_fetched_from_training_bucket(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+    def test_data_yaml_path_uses_gcs_fuse(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
 
-        assert mocks["_load_class_names"].call_args.args[1] == "my-training-bucket"
+        assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/gcs/my-training-bucket/data.yaml"
 
-    def test_class_names_passed_to_write_data_yaml(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
-        with ExitStack() as stack:
-            mocks = self._enter_base_patches(stack)
-            train_module.main()
-
-        mocks["_write_data_yaml"].assert_called_once_with(CLASS_NAMES)
-
-    def test_missing_env_var_raises(self, monkeypatch):
-        for k in ("RUN_ID", "TRAINING_BUCKET", "MODEL_BUCKET"):
-            monkeypatch.delenv(k, raising=False)
-        with pytest.raises(KeyError):
+    def test_missing_args_exits(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["train.py"])
+        with pytest.raises(SystemExit):
             train_module.main()
