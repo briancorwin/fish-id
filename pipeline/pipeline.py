@@ -32,20 +32,30 @@ def fish_id_training_pipeline(
     run_id: str,
     cpu_only: bool = False,
 ) -> None:
-    training_job = run_training_job(
-        run_id=run_id,
-        training_bucket=training_bucket,
-        model_bucket=model_bucket,
-    ).set_container_image(training_image)
-
     with dsl.If(cpu_only == True):
-        training_job.set_cpu_request("16").set_cpu_limit("16")
-        training_job.set_memory_request("64G").set_memory_limit("64G")
+        (
+            run_training_job(
+                run_id=run_id,
+                training_bucket=training_bucket,
+                model_bucket=model_bucket,
+            )
+            .set_container_image(training_image)
+            .set_cpu_request("16").set_cpu_limit("16")
+            .set_memory_request("64G").set_memory_limit("64G")
+        )
 
-    with dsl.If(cpu_only == False):
-        training_job.set_cpu_request("4").set_cpu_limit("4")
-        training_job.set_memory_request("16G").set_memory_limit("16G")
-        training_job.set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
+    with dsl.Else():
+        (
+            run_training_job(
+                run_id=run_id,
+                training_bucket=training_bucket,
+                model_bucket=model_bucket,
+            )
+            .set_container_image(training_image)
+            .set_cpu_request("4").set_cpu_limit("4")
+            .set_memory_request("16G").set_memory_limit("16G")
+            .set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
+        )
 
 
 def main() -> None:
