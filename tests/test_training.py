@@ -106,15 +106,16 @@ class TestConfig:
 
 class TestTrainModel:
     _DATA_YAML = "/gcs/my-training-bucket/data.yaml"
+    _CHECKPOINT_DIR = "/gcs/my-model-bucket/runs/run-001"
 
-    def test_yolo_instantiated_with_model_from_config(self):
+    def test_yolo_instantiated_with_model_from_config(self, tmp_path):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, checkpoint_dir=str(tmp_path))
         mock_yolo.assert_called_once_with("yolov8n.pt")
 
-    def test_train_called_with_correct_hyperparams(self):
+    def test_train_called_with_correct_hyperparams(self, tmp_path):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, checkpoint_dir=str(tmp_path))
         mock_yolo.return_value.train.assert_called_once_with(
             data=self._DATA_YAML,
             epochs=5,
@@ -124,12 +125,34 @@ class TestTrainModel:
             lr0=0.001,
             workers=4,
             cache=False,
+            project=str(tmp_path),
+            name=".",
+            save=True,
+            save_period=1,
         )
 
-    def test_returns_yolo_model(self):
+    def test_returns_yolo_model(self, tmp_path):
         with patch.object(train_module, "YOLO") as mock_yolo:
-            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
+            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, checkpoint_dir=str(tmp_path))
         assert result is mock_yolo.return_value
+
+
+class TestTrainModelResume:
+    _DATA_YAML = "/gcs/my-training-bucket/data.yaml"
+
+    def test_resumes_from_checkpoint_when_last_pt_exists(self, tmp_path):
+        last_pt = tmp_path / "weights" / "last.pt"
+        last_pt.parent.mkdir()
+        last_pt.write_bytes(b"fake")
+        with patch.object(train_module, "YOLO") as mock_yolo:
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, checkpoint_dir=str(tmp_path))
+        mock_yolo.assert_called_once_with(str(last_pt))
+        mock_yolo.return_value.train.assert_called_once_with(resume=True)
+
+    def test_fresh_run_when_no_checkpoint(self, tmp_path):
+        with patch.object(train_module, "YOLO") as mock_yolo:
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, checkpoint_dir=str(tmp_path))
+        mock_yolo.assert_called_once_with("yolov8n.pt")
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +282,14 @@ class TestMain:
             train_module.main()
 
         assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/gcs/my-training-bucket/data.yaml"
+
+    def test_checkpoint_dir_uses_gcs_fuse(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", self._ARGV)
+        with ExitStack() as stack:
+            mocks = self._enter_base_patches(stack)
+            train_module.main()
+
+        assert mocks["_train_model"].call_args.kwargs["checkpoint_dir"] == "/gcs/my-model-bucket/runs/run-test-001"
 
     def test_missing_args_exits(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["train.py"])

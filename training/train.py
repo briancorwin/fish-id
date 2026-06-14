@@ -19,23 +19,33 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _train_model(config: dict, workers: int, data_yaml_path: str) -> YOLO:
-    _logger.info(
-        "[train] starting YOLO training: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
-        config["model"], config["epochs"], config["imgsz"], config["batch"],
-        config["optimizer"], config["lr0"], workers,
-    )
-    model = YOLO(config["model"])
-    model.train(
-        data=data_yaml_path,
-        epochs=config["epochs"],
-        imgsz=config["imgsz"],
-        batch=config["batch"],
-        optimizer=config["optimizer"],
-        lr0=config["lr0"],
-        workers=workers,
-        cache=False,
-    )
+def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_dir: str) -> YOLO:
+    last_pt = Path(checkpoint_dir) / "weights" / "last.pt"
+    if last_pt.exists():
+        _logger.info("[train] checkpoint found — resuming from %s", last_pt)
+        model = YOLO(str(last_pt))
+        model.train(resume=True)
+    else:
+        _logger.info(
+            "[train] starting YOLO training: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
+            config["model"], config["epochs"], config["imgsz"], config["batch"],
+            config["optimizer"], config["lr0"], workers,
+        )
+        model = YOLO(config["model"])
+        model.train(
+            data=data_yaml_path,
+            epochs=config["epochs"],
+            imgsz=config["imgsz"],
+            batch=config["batch"],
+            optimizer=config["optimizer"],
+            lr0=config["lr0"],
+            workers=workers,
+            cache=False,
+            project=checkpoint_dir,
+            name=".",
+            save=True,
+            save_period=1,
+        )
     _logger.info("[train] YOLO training finished. save_dir=%s", model.trainer.save_dir)
     return model
 
@@ -153,9 +163,12 @@ def main() -> None:
     data_yaml_path = f"/gcs/{training_bucket}/data.yaml"
     _logger.info("[train] data_yaml_path=%s", data_yaml_path)
 
+    checkpoint_dir = f"/gcs/{model_bucket}/runs/{run_id}"
+    _logger.info("[train] checkpoint_dir=%s", checkpoint_dir)
+
     _logger.info("[train] starting training (workers=%d)", cpu_count)
     start = time.time()
-    model = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path)
+    model = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path, checkpoint_dir=checkpoint_dir)
     duration = time.time() - start
     _logger.info("[train] training complete in %.1f seconds", duration)
 
