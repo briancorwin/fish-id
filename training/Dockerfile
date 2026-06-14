@@ -14,4 +14,6 @@ RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
 COPY training/config.yaml /app/config.yaml
 COPY training/train.py /app/train.py
 
+ENV PYTHONUNBUFFERED=1
+
 ENTRYPOINT ["python", "/app/train.py"]

@@ -1,92 +1,51 @@
-"""Vertex AI Pipeline: submit training CustomJob, write artifacts to GCS."""
+"""Vertex AI Pipeline: run training container directly as a container component."""
 import logging
 from pathlib import Path
 
 from kfp import compiler, dsl
-from kfp.dsl import component
 
 _logger = logging.getLogger(__name__)
-_BASE_IMAGE = "python:3.12-slim"
 
 
-@component(
-    base_image=_BASE_IMAGE,
-    packages_to_install=["google-cloud-aiplatform==1.70.0"],
-)
+@dsl.container_component
 def run_training_job(
-    project: str,
-    region: str,
-    training_image: str,
     run_id: str,
     training_bucket: str,
     model_bucket: str,
-    cpu_only: bool = False,
-) -> None:
-    import logging  # noqa: PLC0415 — required inside KFP component body
-    import os  # noqa: PLC0415
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    if os.environ.get("SHORT_CIRCUIT", "").lower() == "true":
-        logger.info("SHORT_CIRCUIT=true — skipping CustomJob submission for run %s", run_id)
-        return
-
-    from google.cloud import aiplatform  # noqa: PLC0415
-    from google.cloud.aiplatform_v1.types.custom_job import Scheduling  # noqa: PLC0415
-
-    aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
-    if cpu_only:
-        machine_spec: dict = {"machine_type": "n4-standard-16"}
-    else:
-        machine_spec: dict = {
-            "machine_type": "n1-standard-4",
-            "accelerator_type": "NVIDIA_TESLA_T4",
-            "accelerator_count": 1,
-        }
-    job = aiplatform.CustomJob(
-        display_name=f"fish-id-train-{run_id}",
-        worker_pool_specs=[
-            {
-                "machine_spec": machine_spec,
-                "replica_count": 1,
-                "container_spec": { 
-                    "image_uri": training_image,
-                    "env": [
-                        {"name": "RUN_ID", "value": run_id},
-                        {"name": "TRAINING_BUCKET", "value": training_bucket},
-                        {"name": "MODEL_BUCKET", "value": model_bucket},
-                        {"name": "CONTAINER_IMAGE", "value": training_image},
-                    ],
-                },
-            }
+) -> dsl.ContainerSpec:
+    return dsl.ContainerSpec(
+        image="placeholder",
+        command=["python", "/app/train.py"],
+        args=[
+            "--run-id", run_id,
+            "--training-bucket", training_bucket,
+            "--model-bucket", model_bucket,
         ],
     )
-    training_sa = f"fish-id-training-sa@{project}.iam.gserviceaccount.com"
-    logger.info("Submitting training job fish-id-train-%s", run_id)
-    job.run(sync=True, service_account=training_sa, scheduling_strategy=Scheduling.Strategy.SPOT)
-    logger.info("Training job completed: %s", job.resource_name)
 
 
 @dsl.pipeline(name="fish-id-training-pipeline")
 def fish_id_training_pipeline(
-    project: str,
-    region: str,
     training_bucket: str,
     model_bucket: str,
     training_image: str,
     run_id: str,
     cpu_only: bool = False,
 ) -> None:
-    run_training_job(
-        project=project,
-        region=region,
-        training_image=training_image,
+    training_job = run_training_job(
         run_id=run_id,
         training_bucket=training_bucket,
         model_bucket=model_bucket,
-        cpu_only=cpu_only,
-    )
+    ).set_container_image(training_image)
+
+    with dsl.If(cpu_only == True):
+        training_job.set_cpu_request("16").set_cpu_limit("16")
+        training_job.set_memory_request("64G").set_memory_limit("64G")
+
+    with dsl.If(cpu_only == False):
+        training_job.set_cpu_request("4").set_cpu_limit("4")
+        training_job.set_memory_request("16G").set_memory_limit("16G")
+        training_job.set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
 
 
 def main() -> None:

@@ -349,7 +349,7 @@ class TestArtifactUpload:
 # ---------------------------------------------------------------------------
 
 class TestMain:
-    _ENV = {"RUN_ID": "run-test-001", "TRAINING_BUCKET": "my-training-bucket", "MODEL_BUCKET": "my-model-bucket"}
+    _ARGV = ["train.py", "--run-id", "run-test-001", "--training-bucket", "my-training-bucket", "--model-bucket", "my-model-bucket"]
 
     def _enter_base_patches(self, stack, **overrides):
         specs = {
@@ -367,9 +367,7 @@ class TestMain:
         return mocks
 
     def test_all_steps_called_in_order(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         call_order = []
 
         with patch.object(train_module, "_load_config", side_effect=lambda: call_order.append("load_config") or CONFIG_FIXTURE), \
@@ -388,9 +386,7 @@ class TestMain:
         ]
 
     def test_run_id_passed_to_upload(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
@@ -399,9 +395,7 @@ class TestMain:
         assert run_id == "run-test-001"
 
     def test_class_names_fetched_from_training_bucket(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
@@ -409,17 +403,14 @@ class TestMain:
         assert mocks["_load_class_names"].call_args.args[1] == "my-training-bucket"
 
     def test_class_names_passed_to_write_data_yaml(self, monkeypatch):
-        for k, v in self._ENV.items():
-            monkeypatch.setenv(k, v)
-
+        monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
 
         mocks["_write_data_yaml"].assert_called_once_with(CLASS_NAMES)
 
-    def test_missing_env_var_raises(self, monkeypatch):
-        for k in ("RUN_ID", "TRAINING_BUCKET", "MODEL_BUCKET"):
-            monkeypatch.delenv(k, raising=False)
-        with pytest.raises(KeyError):
+    def test_missing_args_exits(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["train.py"])
+        with pytest.raises(SystemExit):
             train_module.main()

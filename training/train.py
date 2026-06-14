@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import os
@@ -47,7 +48,11 @@ def _download_dataset(storage_client, training_bucket: str) -> None:
                 continue
             dest = str(local_path / filename)
             _logger.info("[train] [%d/%d] downloading %s -> %s", i + 1, len(blobs), blob.name, dest)
-            blob.download_to_filename(dest)
+            try:
+                blob.download_to_filename(dest)
+            except Exception as exc:
+                _logger.error("[train] failed to download %s -> %s: %s", blob.name, dest, exc)
+                raise
         _logger.info("[train] split %s download complete", gcs_prefix)
 
 
@@ -148,9 +153,15 @@ def _upload_artifacts(storage_client, model_bucket: str, run_id: str, onnx_path:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    run_id = os.environ["RUN_ID"]
-    training_bucket = os.environ["TRAINING_BUCKET"]
-    model_bucket = os.environ["MODEL_BUCKET"]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--training-bucket", required=True)
+    parser.add_argument("--model-bucket", required=True)
+    parsed = parser.parse_args()
+
+    run_id = parsed.run_id
+    training_bucket = parsed.training_bucket
+    model_bucket = parsed.model_bucket
 
     cpu_count = int(float(os.environ.get("AIP_REPLICA_CPU_CORES", 0))) or os.cpu_count() or 1
     _logger.info("[train] cpu_count=%d (AIP_REPLICA_CPU_CORES=%s)", cpu_count, os.environ.get("AIP_REPLICA_CPU_CORES", "unset"))
