@@ -71,6 +71,8 @@ def main() -> None:
             "model_bucket": model_bucket,
             "training_image": training_image,
             "run_id": run_id,
+            "project": project,
+            "region": region,
             "cpu_only": args.cpu_only,
         },
         enable_caching=False,
