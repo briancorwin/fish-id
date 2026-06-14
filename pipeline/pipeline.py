@@ -2,6 +2,7 @@
 import logging
 from pathlib import Path
 
+from google_cloud_pipeline_components.v1.custom_job import CustomTrainingJobOp
 from kfp import compiler, dsl
 
 _logger = logging.getLogger(__name__)
@@ -15,13 +16,38 @@ def run_training_job(
 ) -> dsl.ContainerSpec:
     return dsl.ContainerSpec(
         image="placeholder",
-        command=["python", "/app/train.py"],
+        command=["/app/entrypoint.sh"],
         args=[
             "--run-id", run_id,
             "--training-bucket", training_bucket,
             "--model-bucket", model_bucket,
         ],
     )
+
+
+@dsl.component(base_image="python:3.11-slim")
+def make_gpu_worker_pool_specs(
+    training_image: str,
+    run_id: str,
+    training_bucket: str,
+    model_bucket: str,
+) -> list:
+    return [{
+        "machine_spec": {
+            "machine_type": "n1-standard-4",
+            "accelerator_type": "NVIDIA_TESLA_T4",
+            "accelerator_count": 1,
+        },
+        "replica_count": 1,
+        "container_spec": {
+            "image_uri": training_image,
+            "args": [
+                "--run-id", run_id,
+                "--training-bucket", training_bucket,
+                "--model-bucket", model_bucket,
+            ],
+        },
+    }]
 
 
 @dsl.pipeline(name="fish-id-training-pipeline")
@@ -45,17 +71,17 @@ def fish_id_training_pipeline(
         )
 
     with dsl.Else():
-        (
-            run_training_job(
-                run_id=run_id,
-                training_bucket=training_bucket,
-                model_bucket=model_bucket,
-            )
-            .set_container_image(training_image)
-            .set_cpu_request("4").set_cpu_limit("4")
-            .set_memory_request("16G").set_memory_limit("16G")
-            .set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
+        specs = make_gpu_worker_pool_specs(
+            training_image=training_image,
+            run_id=run_id,
+            training_bucket=training_bucket,
+            model_bucket=model_bucket,
         )
+        CustomTrainingJobOp(
+            display_name="fish-id-gpu-training",
+            worker_pool_specs=specs.output,
+            strategy="SPOT",
+        ).set_retry(num_retries=3)
 
 
 def main() -> None:

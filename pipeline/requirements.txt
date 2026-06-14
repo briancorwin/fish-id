@@ -1,1 +1,2 @@
 kfp==2.16.1
+google-cloud-pipeline-components==2.22.0
