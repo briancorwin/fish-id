@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import google.cloud.storage as gcs
+import torch
 import yaml
 from ultralytics import YOLO
 
@@ -49,12 +50,30 @@ def _export_onnx(model: YOLO) -> str:
     return onnx_path
 
 
-def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float) -> dict:
+def _read_image_tag() -> str:
+    tag_file = Path("/app/image_tag.txt")
+    if tag_file.exists():
+        return tag_file.read_text().strip()
+    return "unknown"
+
+
+def _gpu_info() -> list[dict]:
+    return [
+        {
+            "index": i,
+            "name": torch.cuda.get_device_name(i),
+            "memory_total_mb": torch.cuda.get_device_properties(i).total_memory // (1024 ** 2),
+        }
+        for i in range(torch.cuda.device_count())
+    ]
+
+
+def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int) -> dict:
     trainer = model.trainer
     _logger.info("[train] building metadata for run_id=%s duration=%.1fs", run_id, duration_seconds)
     metadata = {
         "run_id": run_id,
-        "container_image": os.environ.get("CONTAINER_IMAGE", "unknown"),
+        "container_image": _read_image_tag(),
         "model_architecture": config["model"].replace(".pt", ""),
         "base_weights": config["model"],
         "trained_at": datetime.now(timezone.utc).isoformat(),
@@ -70,7 +89,8 @@ def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: fl
         "final_train_loss": float(trainer.metrics.get("train/box_loss", 0.0))
         if hasattr(trainer, "metrics")
         else None,
-        "machine_type": os.environ.get("MACHINE_TYPE", "unknown"),
+        "cpu_count": cpu_count,
+        "gpus": _gpu_info(),
     }
     _logger.info("[train] metadata: %s", metadata)
     return metadata
@@ -143,7 +163,7 @@ def main() -> None:
     onnx_path = _export_onnx(model)
 
     _logger.info("[train] building metadata")
-    metadata = _build_metadata(run_id, config, model, duration)
+    metadata = _build_metadata(run_id, config, model, duration, cpu_count)
 
     _logger.info("[train] uploading artifacts to gs://%s", model_bucket)
     _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)

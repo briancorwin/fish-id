@@ -29,6 +29,10 @@ if not hasattr(_google_pkg, "cloud"):
     sys.modules["google.cloud.aiplatform"] = MagicMock()
 if "ultralytics" not in sys.modules:
     sys.modules["ultralytics"] = MagicMock()
+if "torch" not in sys.modules:
+    _torch_mock = MagicMock()
+    _torch_mock.cuda.device_count.return_value = 0
+    sys.modules["torch"] = _torch_mock
 
 import train as train_module
 
@@ -158,7 +162,7 @@ class TestExportOnnx:
 
 class TestArtifactUpload:
     def _make_metadata(self, run_id="run-001"):
-        return train_module._build_metadata(run_id, CONFIG_FIXTURE, _make_mock_model(), 120.0)
+        return train_module._build_metadata(run_id, CONFIG_FIXTURE, _make_mock_model(), 120.0, cpu_count=4)
 
     def _run_upload(self, tmp_path, run_id="run-001"):
         mock_bucket = MagicMock()
