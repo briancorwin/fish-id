@@ -60,6 +60,34 @@ def register_model(
     return model.resource_name
 
 
+@dsl.component(
+    base_image="python:3.11-slim",
+    packages_to_install=["google-cloud-secret-manager>=2.0.0", "requests>=2.31.0"],
+)
+def trigger_deploy(
+    project: str,
+    github_repo: str,
+) -> None:
+    import requests
+    from google.cloud import secretmanager
+
+    client = secretmanager.SecretManagerServiceClient()
+    secret_name = f"projects/{project}/secrets/fish-id-github-deploy-token/versions/latest"
+    token = client.access_secret_version(name=secret_name).payload.data.decode()
+
+    resp = requests.post(
+        f"https://api.github.com/repos/{github_repo}/actions/workflows/deploy.yml/dispatches",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={"ref": "main"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
 @dsl.pipeline(name="fish-id-training-pipeline")
 def fish_id_training_pipeline(
     training_bucket: str,
@@ -68,6 +96,7 @@ def fish_id_training_pipeline(
     run_id: str,
     project: str,
     region: str,
+    github_repo: str,
     cpu_only: bool = False,
 ) -> None:
     with dsl.If(cpu_only == True):
@@ -81,12 +110,13 @@ def fish_id_training_pipeline(
             .set_cpu_request("16").set_cpu_limit("16")
             .set_memory_request("64G").set_memory_limit("64G")
         )
-        register_model(
+        reg_cpu = register_model(
             project=project,
             region=region,
             model_bucket=model_bucket,
             run_id=run_id,
         ).after(cpu_train)
+        trigger_deploy(project=project, github_repo=github_repo).after(reg_cpu)
 
     with dsl.Else():
         gpu_train = (
@@ -100,12 +130,13 @@ def fish_id_training_pipeline(
             .set_memory_request("16G").set_memory_limit("16G")
             .set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
         )
-        register_model(
+        reg_gpu = register_model(
             project=project,
             region=region,
             model_bucket=model_bucket,
             run_id=run_id,
         ).after(gpu_train)
+        trigger_deploy(project=project, github_repo=github_repo).after(reg_gpu)
 
 
 def main() -> None:

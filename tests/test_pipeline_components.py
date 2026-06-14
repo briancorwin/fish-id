@@ -9,10 +9,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 sys.modules.setdefault("google.cloud.aiplatform", MagicMock())
+sys.modules.setdefault("google.cloud.secretmanager", MagicMock())
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pipeline.pipeline import fish_id_training_pipeline, register_model  # noqa: E402
+from pipeline.pipeline import fish_id_training_pipeline, register_model, trigger_deploy  # noqa: E402
 
 
 class TestPipelineCompilation:
@@ -84,3 +85,48 @@ class TestRegisterModel:
         assert kwargs["parent_model"] == existing.resource_name
         assert kwargs["version_description"] == "run-2026-06-14-130000"
         assert result == new_version.resource_name
+
+
+class TestTriggerDeploy:
+    def _run(self, mock_sm: MagicMock, mock_requests: MagicMock, **kwargs) -> None:
+        google_cloud_mock = MagicMock(secretmanager=mock_sm)
+        with patch.dict(sys.modules, {
+            "google.cloud": google_cloud_mock,
+            "google.cloud.secretmanager": mock_sm,
+            "requests": mock_requests,
+        }):
+            trigger_deploy.python_func(
+                project=kwargs.get("project", "test-project"),
+                github_repo=kwargs.get("github_repo", "owner/fish-id"),
+            )
+
+    def test_fetches_token_from_correct_secret(self):
+        mock_sm = MagicMock()
+        mock_sm.SecretManagerServiceClient.return_value.access_secret_version.return_value.payload.data = b"ghp_token"
+        mock_req = MagicMock()
+
+        self._run(mock_sm, mock_req, project="my-project")
+
+        name_arg = mock_sm.SecretManagerServiceClient.return_value.access_secret_version.call_args.kwargs["name"]
+        assert name_arg == "projects/my-project/secrets/fish-id-github-deploy-token/versions/latest"
+
+    def test_dispatches_to_correct_github_url(self):
+        mock_sm = MagicMock()
+        mock_sm.SecretManagerServiceClient.return_value.access_secret_version.return_value.payload.data = b"ghp_token"
+        mock_req = MagicMock()
+
+        self._run(mock_sm, mock_req, github_repo="owner/fish-id")
+
+        url = mock_req.post.call_args.args[0]
+        assert url == "https://api.github.com/repos/owner/fish-id/actions/workflows/deploy.yml/dispatches"
+        assert mock_req.post.call_args.kwargs["json"] == {"ref": "main"}
+        assert mock_req.post.call_args.kwargs["headers"]["Authorization"] == "Bearer ghp_token"
+
+    def test_raises_on_github_api_error(self):
+        mock_sm = MagicMock()
+        mock_sm.SecretManagerServiceClient.return_value.access_secret_version.return_value.payload.data = b"ghp_token"
+        mock_req = MagicMock()
+        mock_req.post.return_value.raise_for_status.side_effect = RuntimeError("403 Forbidden")
+
+        with pytest.raises(RuntimeError, match="403"):
+            self._run(mock_sm, mock_req)
