@@ -154,6 +154,16 @@ terraform output cicd_service_account_email
 terraform output model_bucket_name
 ```
 
+### 4. Populate the GitHub deploy token secret
+
+Terraform creates the Secret Manager secret shell but does not populate it. After `terraform apply`, seed the GitHub PAT that the training pipeline uses to trigger deploys (requires a PAT with `repo` scope or `actions:write`):
+
+```bash
+echo -n "YOUR_GITHUB_PAT" | gcloud secrets versions add fish-id-github-deploy-token \
+  --data-file=- \
+  --project=${GCP_PROJECT_ID}
+```
+
 ---
 
 ## Web App Deployment via GitHub Actions
@@ -162,15 +172,19 @@ Requires [Infrastructure Setup](#infrastructure-setup) to be completed first.
 
 On every PR merged to `main`, two jobs run in sequence: `deploy-api` (Cloud Run) then `deploy-frontend` (Firebase Hosting). Both authenticate to GCP using Workload Identity Federation — no long-lived credentials required.
 
-### 1. Upload the initial model to GCS
+### 1. Seed the initial model in Vertex AI Model Registry
 
-The deploy workflow downloads `fish-id.onnx` from GCS at deploy time. Upload a starting model before the first deploy:
+The deploy workflow resolves `fish-id.onnx` from the `production` alias in Vertex AI Model Registry. The training pipeline populates this automatically after the first successful run. For an initial deploy before any training run, register the model manually:
 
 ```bash
-gsutil cp /path/to/fish-id.onnx gs://${GCP_PROJECT_ID}-fish-id-models/fish-id.onnx
+gcloud ai models upload \
+  --display-name=fish-id \
+  --artifact-uri=gs://${GCP_PROJECT_ID}-fish-id-models/runs/<run-id>/ \
+  --container-image-uri=us-docker.pkg.dev/vertex-ai/prediction/onnx-cpu.1-14:latest \
+  --version-aliases=latest,production \
+  --region=${GCP_REGION} \
+  --project=${GCP_PROJECT_ID}
 ```
-
-Once the continuous training pipeline is running, promotions overwrite this path automatically.
 
 ### 2. Set GitHub Actions secrets
 
@@ -182,7 +196,6 @@ Navigate to **Settings → Secrets and variables → Actions** in the GitHub rep
 | `GCP_REGION` | Region used during Terraform apply (e.g. `us-central1`) |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output of `terraform output workload_identity_provider` |
 | `GCP_SERVICE_ACCOUNT` | Output of `terraform output cicd_service_account_email` |
-| `ONNX_MODEL_GCS_URI` | `gs://${GCP_PROJECT_ID}-fish-id-models/fish-id.onnx` |
 
 ### 3. Deploy
 
@@ -227,13 +240,14 @@ export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
 export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
 export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
+export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
 python scripts/trigger-training.py
 ```
 
-Use `--image <uri>` to override the training container image resolved from GCS.
+Use `--image <uri>` to override the training container image. Use `--cpu-only` to skip the GPU accelerator.
 
-The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. The trained ONNX model lands at `gs://${MODEL_BUCKET}/runs/<run-id>/fish-id.onnx`.
+The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. On success, the pipeline registers the model in Vertex AI Model Registry with a `production` alias and automatically triggers `deploy.yml` to redeploy Cloud Run with the new model.
 
 ---
 

@@ -94,6 +94,8 @@ fish-id/
 | Keyless CI/CD auth | Workload Identity Federation |
 | Managed training jobs | Vertex AI CustomJob |
 | Pipeline orchestration | Vertex AI Pipelines (KFP v2) |
+| Model versioning + promotion | Vertex AI Model Registry |
+| GitHub PAT for deploy trigger | Secret Manager |
 
 ---
 
