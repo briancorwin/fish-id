@@ -173,6 +173,7 @@ lr0: 0.001
 
 **`fish-id-cicd-sa`** (GitHub Actions):
 - `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-models` bucket (write compiled pipeline JSON)
+- `roles/aiplatform.viewer` on project (list Model Registry versions to resolve `production` alias at deploy time)
 
 ---
 

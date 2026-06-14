@@ -84,6 +84,13 @@ resource "google_storage_bucket_iam_member" "cicd_model_writer" {
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
+# CI/CD SA — list and read Vertex AI Model Registry to resolve production alias at deploy time
+resource "google_project_iam_member" "cicd_aiplatform_viewer" {
+  project = var.project_id
+  role    = "roles/aiplatform.viewer"
+  member  = "serviceAccount:${google_service_account.cicd.email}"
+}
+
 # Workflows service account — used by KFP pipeline components
 resource "google_service_account" "workflows" {
   account_id   = "fish-id-workflows-sa"
