@@ -113,6 +113,7 @@ def fish_id_training_pipeline(
             .set_container_image(training_image)
             .set_cpu_request("16").set_cpu_limit("16")
             .set_memory_request("64G").set_memory_limit("64G")
+            .set_retry(num_retries=3)
         )
         reg_cpu = register_model(
             project=project,
@@ -133,6 +134,7 @@ def fish_id_training_pipeline(
             .set_cpu_request("4").set_cpu_limit("4")
             .set_memory_request("16G").set_memory_limit("16G")
             .set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
+            .set_retry(num_retries=3)
         )
         reg_gpu = register_model(
             project=project,
