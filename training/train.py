@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
@@ -68,11 +69,48 @@ def _gpu_info() -> list[dict]:
     ]
 
 
-def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int) -> dict:
+def _download_prefix(bucket: gcs.Bucket, gcs_prefix: str, local_dir: Path) -> None:
+    blobs = list(bucket.list_blobs(prefix=gcs_prefix))
+    _logger.info("[train] downloading %d files from %s", len(blobs), gcs_prefix)
+
+    def _fetch(blob: gcs.Blob) -> None:
+        filename = blob.name[len(gcs_prefix):]
+        if not filename:
+            return
+        dest = local_dir / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        blob.download_to_filename(str(dest))
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        list(executor.map(_fetch, blobs))
+
+
+def _download_training_data(storage_client: gcs.Client, training_bucket: str, local_dir: Path) -> None:
+    bucket = storage_client.bucket(training_bucket)
+
+    local_dir.mkdir(parents=True, exist_ok=True)
+    bucket.blob("data.yaml").download_to_filename(str(local_dir / "data.yaml"))
+
+    _download_prefix(bucket, "images/train/", local_dir / "images/train")
+    _download_prefix(bucket, "images/val/",   local_dir / "images/val")
+    _download_prefix(bucket, "labels/train/", local_dir / "labels/train")
+    _download_prefix(bucket, "labels/val/",   local_dir / "labels/val")
+
+    _logger.info("[train] data download complete")
+
+
+def _read_dataset_generation(storage_client: gcs.Client, training_bucket: str) -> int:
+    blob = storage_client.bucket(training_bucket).blob("data.yaml")
+    blob.reload()
+    return blob.generation
+
+
+def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int, dataset_generation: int) -> dict:
     trainer = model.trainer
     _logger.info("[train] building metadata for run_id=%s duration=%.1fs", run_id, duration_seconds)
     metadata = {
         "run_id": run_id,
+        "dataset_generation": dataset_generation,
         "container_image": _read_image_tag(),
         "model_architecture": config["model"].replace(".pt", ""),
         "base_weights": config["model"],
@@ -150,7 +188,15 @@ def main() -> None:
     storage_client = gcs.Client()
     _logger.info("[train] GCS client ready")
 
-    data_yaml_path = f"/gcs/{training_bucket}/data.yaml"
+    _logger.info("[train] reading dataset generation from gs://%s/data.yaml", training_bucket)
+    dataset_generation = _read_dataset_generation(storage_client, training_bucket)
+    _logger.info("[train] dataset_generation=%d", dataset_generation)
+
+    local_data_dir = Path("/app/data")
+    _logger.info("[train] downloading training data to %s", local_data_dir)
+    _download_training_data(storage_client, training_bucket, local_data_dir)
+
+    data_yaml_path = str(local_data_dir / "data.yaml")
     _logger.info("[train] data_yaml_path=%s", data_yaml_path)
 
     _logger.info("[train] starting training (workers=%d)", cpu_count)
@@ -163,7 +209,7 @@ def main() -> None:
     onnx_path = _export_onnx(model)
 
     _logger.info("[train] building metadata")
-    metadata = _build_metadata(run_id, config, model, duration, cpu_count)
+    metadata = _build_metadata(run_id, config, model, duration, cpu_count, dataset_generation)
 
     _logger.info("[train] uploading artifacts to gs://%s", model_bucket)
     _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)

@@ -36,11 +36,20 @@ resource "google_storage_bucket_iam_member" "cicd_model_reader" {
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
-# Training data bucket — flat pool of images and labels, no versioning
+# Training data bucket — flat pool of images and labels, versioned so each sync is recoverable
 resource "google_storage_bucket" "training" {
   name                        = "${var.project_id}-fish-id-training"
   location                    = var.region
   uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    condition { num_newer_versions = 10 }
+    action    { type = "Delete" }
+  }
 
   depends_on = [google_project_service.apis["storage.googleapis.com"]]
 }
