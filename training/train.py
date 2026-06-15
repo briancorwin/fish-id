@@ -213,7 +213,7 @@ def main() -> None:
 
     # FUSE path so YOLO can write checkpoints directly to GCS each epoch without
     # hooking into its internal save logic; all other GCS access uses the client.
-    gcs_checkpoint_dir = f"/gcs/{model_bucket}/fish-id-runs/{run_id}"
+    gcs_checkpoint_dir = f"/gcs/{model_bucket}/runs/{run_id}"
     _logger.info("[train] checkpoint dir=%s", gcs_checkpoint_dir)
 
     _logger.info("[train] starting training (workers=%d)", cpu_count)
