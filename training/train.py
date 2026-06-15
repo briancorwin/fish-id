@@ -20,23 +20,35 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _train_model(config: dict, workers: int, data_yaml_path: str) -> YOLO:
-    _logger.info(
-        "[train] starting YOLO training: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
-        config["model"], config["epochs"], config["imgsz"], config["batch"],
-        config["optimizer"], config["lr0"], workers,
-    )
-    model = YOLO(config["model"])
-    model.train(
-        data=data_yaml_path,
-        epochs=config["epochs"],
-        imgsz=config["imgsz"],
-        batch=config["batch"],
-        optimizer=config["optimizer"],
-        lr0=config["lr0"],
-        workers=workers,
-        cache=False,
-    )
+def _train_model(config: dict, workers: int, data_yaml_path: str, gcs_checkpoint_dir: str) -> YOLO:
+    last_checkpoint_path = os.path.join(gcs_checkpoint_dir, "weights", "last.pt")
+
+    if os.path.exists(last_checkpoint_path):
+        _logger.info("[train] checkpoint found — resuming from %s", last_checkpoint_path)
+        model = YOLO(last_checkpoint_path)
+        model.train(resume=True)
+    else:
+        _logger.info(
+            "[train] no checkpoint found — starting fresh: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
+            config["model"], config["epochs"], config["imgsz"], config["batch"],
+            config["optimizer"], config["lr0"], workers,
+        )
+        model = YOLO(config["model"])
+        model.train(
+            data=data_yaml_path,
+            epochs=config["epochs"],
+            imgsz=config["imgsz"],
+            batch=config["batch"],
+            optimizer=config["optimizer"],
+            lr0=config["lr0"],
+            workers=workers,
+            cache=False,
+            project=gcs_checkpoint_dir,
+            name=".",
+            save=True,
+            save_period=1,
+        )
+
     _logger.info("[train] YOLO training finished. save_dir=%s", model.trainer.save_dir)
     return model
 
@@ -199,9 +211,14 @@ def main() -> None:
     data_yaml_path = str(local_data_dir / "data.yaml")
     _logger.info("[train] data_yaml_path=%s", data_yaml_path)
 
+    # FUSE path so YOLO can write checkpoints directly to GCS each epoch without
+    # hooking into its internal save logic; all other GCS access uses the client.
+    gcs_checkpoint_dir = f"/gcs/{model_bucket}/fish-id-runs/{run_id}"
+    _logger.info("[train] checkpoint dir=%s", gcs_checkpoint_dir)
+
     _logger.info("[train] starting training (workers=%d)", cpu_count)
     start = time.time()
-    model = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path)
+    model = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path, gcs_checkpoint_dir=gcs_checkpoint_dir)
     duration = time.time() - start
     _logger.info("[train] training complete in %.1f seconds", duration)
 
