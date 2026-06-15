@@ -3,12 +3,14 @@
 Manually submit a Vertex AI training pipeline run.
 
 Usage:
-    python scripts/trigger-training.py [--image <image-uri>] [--cpu-only]
+    python scripts/trigger-training.py [--image <image-uri>] [--cpu-only] [--run-id <id>]
 
 Flags:
     --image      Training container image URI. Defaults to :latest in Artifact Registry.
     --cpu-only   Run on CPU only (n4-standard-16, no GPU). Uses STANDARD scheduling
                  strategy instead of SPOT. Useful when GPU quota is unavailable.
+    --run-id     Reuse an existing run ID to restart an interrupted run. Defaults to a
+                 new timestamped ID.
 
 Environment variables:
     GCP_PROJECT_ID   GCP project ID (required)
@@ -39,6 +41,10 @@ def main() -> None:
         action="store_true",
         help="Run on CPU only — omits GPU accelerator spec. Useful when GPU quota is unavailable.",
     )
+    parser.add_argument(
+        "--run-id",
+        help="Reuse an existing run ID to restart an interrupted run. Defaults to a new timestamped ID.",
+    )
     args = parser.parse_args()
 
     project = os.environ["GCP_PROJECT_ID"]
@@ -52,7 +58,7 @@ def main() -> None:
     else:
         training_image = f"{region}-docker.pkg.dev/{project}/fish-id/fish-id-train:latest"
 
-    run_id = _make_run_id()
+    run_id = args.run_id if args.run_id else _make_run_id()
     pipeline_template_uri = f"gs://{model_bucket}/pipeline/fish-id-training-pipeline.json"
 
     print(f"\nSubmitting pipeline run: {run_id}")
