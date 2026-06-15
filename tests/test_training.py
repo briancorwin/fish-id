@@ -105,7 +105,7 @@ class TestConfig:
 # ---------------------------------------------------------------------------
 
 class TestTrainModel:
-    _DATA_YAML = "/gcs/my-training-bucket/data.yaml"
+    _DATA_YAML = "/app/data/data.yaml"
 
     def test_yolo_instantiated_with_model_from_config(self):
         with patch.object(train_module, "YOLO") as mock_yolo:
@@ -130,6 +130,45 @@ class TestTrainModel:
         with patch.object(train_module, "YOLO") as mock_yolo:
             result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML)
         assert result is mock_yolo.return_value
+
+
+# ---------------------------------------------------------------------------
+# Test 5: _download_training_data
+# ---------------------------------------------------------------------------
+
+class TestDownloadTrainingData:
+    def _make_client(self, blobs_by_prefix=None):
+        mock_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_client.bucket.return_value = mock_bucket
+        mock_bucket.list_blobs.side_effect = lambda prefix=None: (blobs_by_prefix or {}).get(prefix, [])
+        return mock_client, mock_bucket
+
+    def test_downloads_data_yaml(self, tmp_path):
+        mock_client, mock_bucket = self._make_client()
+        train_module._download_training_data(mock_client, "my-bucket", tmp_path)
+        mock_bucket.blob.assert_called_with("data.yaml")
+        mock_bucket.blob.return_value.download_to_filename.assert_called_with(str(tmp_path / "data.yaml"))
+
+    def test_lists_all_four_prefixes(self, tmp_path):
+        mock_client, mock_bucket = self._make_client()
+        train_module._download_training_data(mock_client, "my-bucket", tmp_path)
+        called_prefixes = {call.kwargs["prefix"] for call in mock_bucket.list_blobs.call_args_list}
+        assert called_prefixes == {"images/train/", "images/val/", "labels/train/", "labels/val/"}
+
+    def test_blob_downloaded_to_correct_local_path(self, tmp_path):
+        blob = MagicMock()
+        blob.name = "images/train/fish1.jpg"
+        mock_client, _ = self._make_client({"images/train/": [blob]})
+        train_module._download_training_data(mock_client, "my-bucket", tmp_path)
+        blob.download_to_filename.assert_called_once_with(str(tmp_path / "images" / "train" / "fish1.jpg"))
+
+    def test_creates_local_directories(self, tmp_path):
+        blob = MagicMock()
+        blob.name = "images/train/fish1.jpg"
+        mock_client, _ = self._make_client({"images/train/": [blob]})
+        train_module._download_training_data(mock_client, "my-bucket", tmp_path)
+        assert (tmp_path / "images" / "train").is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +201,7 @@ class TestExportOnnx:
 
 class TestArtifactUpload:
     def _make_metadata(self, run_id="run-001"):
-        return train_module._build_metadata(run_id, CONFIG_FIXTURE, _make_mock_model(), 120.0, cpu_count=4)
+        return train_module._build_metadata(run_id, CONFIG_FIXTURE, _make_mock_model(), 120.0, cpu_count=4, dataset_generation=12345)
 
     def _run_upload(self, tmp_path, run_id="run-001"):
         mock_bucket = MagicMock()
@@ -209,6 +248,7 @@ class TestArtifactUpload:
         assert "trained_at" in metadata
         assert metadata["duration_seconds"] == 120.0
         assert metadata["training_args"]["optimizer"] == "AdamW"
+        assert metadata["dataset_generation"] == 12345
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +261,8 @@ class TestMain:
     def _enter_base_patches(self, stack, **overrides):
         specs = {
             "_load_config": dict(return_value=CONFIG_FIXTURE),
+            "_read_dataset_generation": dict(return_value=99999),
+            "_download_training_data": {},
             "_train_model": dict(return_value=_make_mock_model()),
             "_export_onnx": dict(return_value="/tmp/best.onnx"),
             "_upload_artifacts": {},
@@ -235,13 +277,15 @@ class TestMain:
         call_order = []
 
         with patch.object(train_module, "_load_config", side_effect=lambda: call_order.append("load_config") or CONFIG_FIXTURE), \
+             patch.object(train_module, "_read_dataset_generation", side_effect=lambda *a: call_order.append("read_dataset_generation") or 99999), \
+             patch.object(train_module, "_download_training_data", side_effect=lambda *a: call_order.append("download_training_data")), \
              patch.object(train_module, "_train_model", side_effect=lambda *a, **kw: call_order.append("train_model") or _make_mock_model()), \
              patch.object(train_module, "_export_onnx", side_effect=lambda *a: call_order.append("export_onnx") or "/tmp/best.onnx"), \
              patch.object(train_module, "_upload_artifacts", side_effect=lambda *a: call_order.append("upload_artifacts")), \
              patch.object(train_module.gcs, "Client"):
             train_module.main()
 
-        assert call_order == ["load_config", "train_model", "export_onnx", "upload_artifacts"]
+        assert call_order == ["load_config", "read_dataset_generation", "download_training_data", "train_model", "export_onnx", "upload_artifacts"]
 
     def test_run_id_passed_to_upload(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", self._ARGV)
@@ -252,13 +296,13 @@ class TestMain:
         _, _, run_id, _, _ = mocks["_upload_artifacts"].call_args.args
         assert run_id == "run-test-001"
 
-    def test_data_yaml_path_uses_gcs_fuse(self, monkeypatch):
+    def test_data_yaml_path_uses_local_dir(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
 
-        assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/gcs/my-training-bucket/data.yaml"
+        assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/app/data/data.yaml"
 
     def test_missing_args_exits(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["train.py"])
