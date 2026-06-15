@@ -68,11 +68,18 @@ def _gpu_info() -> list[dict]:
     ]
 
 
-def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int) -> dict:
+def _read_dataset_generation(storage_client: gcs.Client, training_bucket: str) -> int:
+    blob = storage_client.bucket(training_bucket).blob("data.yaml")
+    blob.reload()
+    return blob.generation
+
+
+def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int, dataset_generation: int) -> dict:
     trainer = model.trainer
     _logger.info("[train] building metadata for run_id=%s duration=%.1fs", run_id, duration_seconds)
     metadata = {
         "run_id": run_id,
+        "dataset_generation": dataset_generation,
         "container_image": _read_image_tag(),
         "model_architecture": config["model"].replace(".pt", ""),
         "base_weights": config["model"],
@@ -162,8 +169,12 @@ def main() -> None:
     _logger.info("[train] exporting ONNX")
     onnx_path = _export_onnx(model)
 
+    _logger.info("[train] reading dataset generation from gs://%s/data.yaml", training_bucket)
+    dataset_generation = _read_dataset_generation(storage_client, training_bucket)
+    _logger.info("[train] dataset_generation=%d", dataset_generation)
+
     _logger.info("[train] building metadata")
-    metadata = _build_metadata(run_id, config, model, duration, cpu_count)
+    metadata = _build_metadata(run_id, config, model, duration, cpu_count, dataset_generation)
 
     _logger.info("[train] uploading artifacts to gs://%s", model_bucket)
     _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)

@@ -24,6 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import google.cloud.storage as gcs
 import yaml
 
 
@@ -92,13 +93,13 @@ def main() -> None:
         _rsync_to_gcs(dirs["val images"],   f"{gcs_base}/images/val/")
         _rsync_to_gcs(dirs["val labels"],   f"{gcs_base}/labels/val/")
 
-        # Step 3: Upload data.yaml with GCS FUSE paths for direct use by the training container
+        # Step 3: Upload data.yaml and capture the GCS generation as the dataset version
         print("Step 3: Uploading data.yaml...")
         with open(export_dir / "data.yaml") as f:
             roboflow_yaml = yaml.safe_load(f)
         class_names = roboflow_yaml.get("names", [])
         training_yaml = {
-            "path": f"/gcs/{args.bucket}",
+            "path": "/app/data",
             "train": "images/train",
             "val": "images/val",
             "nc": len(class_names),
@@ -107,12 +108,16 @@ def main() -> None:
         training_yaml_file = tmp_path / "data.yaml"
         with open(training_yaml_file, "w") as f:
             yaml.dump(training_yaml, f)
-        cmd = ["gsutil", "cp", str(training_yaml_file), f"{gcs_base}/data.yaml"]
-        print(f"  {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
+
+        storage_client = gcs.Client()
+        blob = storage_client.bucket(args.bucket).blob("data.yaml")
+        blob.upload_from_filename(str(training_yaml_file))
+        blob.reload()
+        dataset_generation = blob.generation
 
     print(f"\nDone. Dataset synced to gs://{args.bucket}/")
     print(f"  Classes ({len(class_names)}): {', '.join(class_names)}")
+    print(f"  Dataset generation: {dataset_generation}")
 
 
 if __name__ == "__main__":
