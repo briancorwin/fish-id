@@ -33,8 +33,29 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
 
-      - name: Download model from GCS
-        run: gsutil cp ${{ secrets.ONNX_MODEL_GCS_URI }} app/fish-id.onnx
+      - name: Download model from Vertex AI Registry
+        run: |
+          MODEL=$(gcloud ai models list \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --region="${{ secrets.GCP_REGION }}" \
+            --filter='displayName="fish-id"' \
+            --format='value(name)' \
+            --limit=1)
+          if [ -z "$MODEL" ]; then
+            echo "::error::fish-id model not found in Vertex AI Model Registry"
+            exit 1
+          fi
+          ARTIFACT_URI=$(gcloud ai models list-version "$MODEL" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --region="${{ secrets.GCP_REGION }}" \
+            --filter='versionAliases:production' \
+            --format='value(artifactUri)' \
+            --limit=1)
+          if [ -z "$ARTIFACT_URI" ]; then
+            echo "::error::No version with 'production' alias found for fish-id"
+            exit 1
+          fi
+          gsutil cp "${ARTIFACT_URI%/}/fish-id.onnx" app/fish-id.onnx
 
       - name: Build and push Docker image
         run: |

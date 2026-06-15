@@ -84,6 +84,13 @@ resource "google_storage_bucket_iam_member" "cicd_model_writer" {
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
+# CI/CD SA — list and read Vertex AI Model Registry to resolve production alias at deploy time
+resource "google_project_iam_member" "cicd_aiplatform_viewer" {
+  project = var.project_id
+  role    = "roles/aiplatform.viewer"
+  member  = "serviceAccount:${google_service_account.cicd.email}"
+}
+
 # Workflows service account — used by KFP pipeline components
 resource "google_service_account" "workflows" {
   account_id   = "fish-id-workflows-sa"
@@ -117,4 +124,23 @@ resource "google_project_iam_member" "workflows_log_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.workflows.email}"
+}
+
+# Secret holding the GitHub PAT used to trigger workflow_dispatch on deploy.yml
+# The secret version (the PAT value) must be added manually after `terraform apply`:
+#   echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --data-file=-
+resource "google_secret_manager_secret" "github_deploy_token" {
+  secret_id = "fish-id-github-deploy-token"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis["secretmanager.googleapis.com"]]
+}
+
+# Workflows SA — read the GitHub deploy token at pipeline runtime
+resource "google_secret_manager_secret_iam_member" "workflows_deploy_token" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.github_deploy_token.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.workflows.email}"
 }

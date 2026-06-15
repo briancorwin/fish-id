@@ -6,12 +6,14 @@ GitHub Actions handles all deploys on merge to `main`. Manual CLI deployment via
 
 ## Workflow: `.github/workflows/deploy.yml`
 
-Two jobs run sequentially on every merged PR:
+Two jobs run sequentially on push to `main` **or** on `workflow_dispatch` (which the training pipeline fires automatically after each successful model registration):
 
-1. **`deploy-api`** — downloads `fish-id.onnx` from GCS into `app/`, builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run
+1. **`deploy-api`** — resolves the `production`-aliased version in Vertex AI Model Registry, downloads `fish-id.onnx` from its GCS artifact URI, builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run
 2. **`deploy-frontend`** — fetches the Cloud Run URL, injects it into `app.js`, deploys `frontend/` to Firebase Hosting
 
 Both jobs authenticate using **Workload Identity Federation** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
+
+The `workflow_dispatch` trigger accepts an optional `run_id` input; when provided by the training pipeline, it is used as a Cloud Run revision suffix for traceability.
 
 ---
 
@@ -48,4 +50,5 @@ The compiled pipeline template must be current before a training run is triggere
 | `GCP_REGION` | Cloud Run / Artifact Registry region |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Output from `terraform output workload_identity_provider` |
 | `GCP_SERVICE_ACCOUNT` | Output from `terraform output cicd_service_account_email` |
-| `ONNX_MODEL_GCS_URI` | `gs://${GCP_PROJECT_ID}-fish-id-models/fish-id.onnx` |
+
+`ONNX_MODEL_GCS_URI` is no longer used and can be removed from GitHub repo settings — the model is now resolved dynamically from Vertex AI Model Registry at deploy time.
