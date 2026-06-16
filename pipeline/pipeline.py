@@ -129,7 +129,7 @@ def trigger_deploy(
     token = client.access_secret_version(name=secret_name).payload.data.decode()
 
     resp = requests.post(
-        f"https://api.github.com/repos/{github_repo}/actions/workflows/deploy.yml/dispatches",
+        f"https://api.github.com/repos/{github_repo}/actions/workflows/deploy-api.yml/dispatches",
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",

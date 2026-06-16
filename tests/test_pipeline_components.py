@@ -174,7 +174,7 @@ class TestTriggerDeploy:
         self._run(mock_sm, mock_req, github_repo="owner/fish-id")
 
         url = mock_req.post.call_args.args[0]
-        assert url == "https://api.github.com/repos/owner/fish-id/actions/workflows/deploy.yml/dispatches"
+        assert url == "https://api.github.com/repos/owner/fish-id/actions/workflows/deploy-api.yml/dispatches"
         assert mock_req.post.call_args.kwargs["json"] == {"ref": "main"}
         assert mock_req.post.call_args.kwargs["headers"]["Authorization"] == "Bearer ghp_token"
 
