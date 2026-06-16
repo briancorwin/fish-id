@@ -1,0 +1,39 @@
+name: Upload pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pipeline/**"
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+
+jobs:
+  upload-pipeline:
+    name: Compile & Upload pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Compile and upload pipeline
+        run: |
+          pip install -r pipeline/requirements.txt
+          python pipeline/pipeline.py
+          gsutil cp pipeline/fish-id-training-pipeline.json \
+            gs://${{ env.GCP_PROJECT_ID }}-fish-id-models/pipeline/fish-id-training-pipeline.json
