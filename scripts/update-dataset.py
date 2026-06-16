@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=invalid-name
 """
 Export from Roboflow and sync to the GCS training bucket.
 
@@ -47,7 +48,7 @@ def main() -> None:
     api_key = os.environ["ROBOFLOW_API_KEY"]
 
     try:
-        from roboflow import Roboflow
+        from roboflow import Roboflow  # pylint: disable=import-outside-toplevel
     except ImportError:
         print("ERROR: roboflow package not installed. Run: pip install roboflow", file=sys.stderr)
         sys.exit(1)
@@ -95,7 +96,7 @@ def main() -> None:
 
         # Step 3: Upload data.yaml and capture the GCS generation as the dataset version
         print("Step 3: Uploading data.yaml...")
-        with open(export_dir / "data.yaml") as f:
+        with open(export_dir / "data.yaml", encoding="utf-8") as f:
             roboflow_yaml = yaml.safe_load(f)
         class_names = roboflow_yaml.get("names", [])
         training_yaml = {
@@ -106,7 +107,7 @@ def main() -> None:
             "names": class_names,
         }
         training_yaml_file = tmp_path / "data.yaml"
-        with open(training_yaml_file, "w") as f:
+        with open(training_yaml_file, "w", encoding="utf-8") as f:
             yaml.dump(training_yaml, f)
 
         storage_client = gcs.Client()

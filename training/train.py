@@ -31,7 +31,7 @@ class GCSCheckpointCallback:
 
 
 def _load_config() -> dict:
-    with open("/app/config.yaml") as f:
+    with open("/app/config.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -80,11 +80,13 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_buc
             save=True,
         )
 
+    assert model.trainer is not None
     _logger.info("[train] YOLO training finished. save_dir=%s", model.trainer.save_dir)
     return model
 
 
 def _export_onnx(model: YOLO) -> str:
+    assert model.trainer is not None
     best_pt = str(model.trainer.save_dir / "weights/best.pt")
     _logger.info("[train] exporting ONNX from %s", best_pt)
     best_model = YOLO(best_pt)
@@ -97,7 +99,7 @@ def _export_onnx(model: YOLO) -> str:
 def _read_image_tag() -> str:
     tag_file = Path("/app/image_tag.txt")
     if tag_file.exists():
-        return tag_file.read_text().strip()
+        return tag_file.read_text(encoding="utf-8").strip()
     return "unknown"
 
 
@@ -148,7 +150,10 @@ def _read_dataset_generation(storage_client: gcs.Client, training_bucket: str) -
     return blob.generation
 
 
-def _build_metadata(run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int, dataset_generation: int) -> dict:
+def _build_metadata(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str, config: dict, model: YOLO, duration_seconds: float, cpu_count: int, dataset_generation: int
+) -> dict:
+    assert model.trainer is not None
     trainer = model.trainer
     _logger.info("[train] building metadata for run_id=%s duration=%.1fs", run_id, duration_seconds)
     metadata = {
@@ -192,7 +197,7 @@ def _upload_artifacts(storage_client: gcs.Client, model_bucket: str, run_id: str
     _logger.info("[train] uploaded production ONNX")
 
     metadata_local = "/tmp/metadata.json"
-    with open(metadata_local, "w") as f:
+    with open(metadata_local, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
     metadata_dest = f"runs/{run_id}/metadata.json"

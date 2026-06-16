@@ -126,7 +126,7 @@ resource "google_project_iam_member" "workflows_log_writer" {
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
-# Secret holding the GitHub PAT used to trigger workflow_dispatch on deploy.yml
+# Secret holding the GitHub PAT used to trigger workflow_dispatch on deploy-api.yml
 # The secret version (the PAT value) must be added manually after `terraform apply`:
 #   echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --data-file=-
 resource "google_secret_manager_secret" "github_deploy_token" {

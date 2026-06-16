@@ -3,10 +3,9 @@
 All external dependencies (GCS, YOLO/ultralytics) are mocked.
 No real infrastructure is required.
 """
+# pylint: disable=protected-access,wrong-import-position,import-outside-toplevel,wrong-import-order,use-dict-literal
 
 import io
-import json
-import os
 import sys
 from contextlib import ExitStack
 from pathlib import Path
@@ -77,7 +76,7 @@ class TestLoadConfig:
     def test_reads_from_correct_path(self):
         with patch("builtins.open", mock_open(read_data=CONFIG_YAML)) as mo:
             train_module._load_config()
-        mo.assert_called_once_with("/app/config.yaml")
+        mo.assert_called_once_with("/app/config.yaml", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -90,12 +89,12 @@ class TestConfig:
     CONFIG_PATH = TRAINING_DIR / "config.yaml"
 
     def test_all_required_keys_present(self):
-        with open(self.CONFIG_PATH) as f:
+        with open(self.CONFIG_PATH, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         assert {"model", "epochs", "imgsz", "batch", "optimizer", "lr0"} <= set(cfg.keys())
 
     def test_model_is_yolov8n(self):
-        with open(self.CONFIG_PATH) as f:
+        with open(self.CONFIG_PATH, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
         assert cfg["model"] == "yolov8n.pt"
 
@@ -377,11 +376,11 @@ class TestMain:
 
     def _enter_base_patches(self, stack, **overrides):
         specs = {
-            "_load_config": dict(return_value=CONFIG_FIXTURE),
-            "_read_dataset_generation": dict(return_value=99999),
+            "_load_config": {"return_value": CONFIG_FIXTURE},
+            "_read_dataset_generation": {"return_value": 99999},
             "_download_training_data": {},
-            "_train_model": dict(return_value=_make_mock_model()),
-            "_export_onnx": dict(return_value="/tmp/best.onnx"),
+            "_train_model": {"return_value": _make_mock_model()},
+            "_export_onnx": {"return_value": "/tmp/best.onnx"},
             "_upload_artifacts": {},
         }
         specs.update(overrides)

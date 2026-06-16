@@ -25,7 +25,7 @@ _IMAGE_MAGIC = [
 ]
 
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "fish-id.onnx")
-_identifier: FishIdentifier | None = None
+_identifier: FishIdentifier | None = None  # pylint: disable=invalid-name
 
 
 def _is_valid_image(data: bytes) -> bool:
@@ -42,7 +42,7 @@ def _load_model():
     if _identifier is None:
         try:
             _identifier = FishIdentifier(_MODEL_PATH)
-        except Exception as e:
+        except (FileNotFoundError, RuntimeError) as e:
             logger.error("Failed to load model: %s", e)
 
 
@@ -89,7 +89,7 @@ def detect():
     except ValueError as e:
         logger.error("Postprocessing failed: %s", e)
         return jsonify({"error": "Internal model error"}), 500
-    except cv2.error as e:
+    except cv2.error as e:  # pylint: disable=catching-non-exception
         logger.error("Image processing failed: %s", e)
         return jsonify({"error": "Internal model error"}), 500
     except RuntimeError as e:

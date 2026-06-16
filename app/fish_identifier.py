@@ -42,11 +42,11 @@ class FishIdentifier:
                     # (e.g. {0: 'Bass'}) rather than valid JSON — ast.literal_eval handles both.
                     raw = ast.literal_eval(names_str)
                 return {int(k): v for k, v in raw.items()}
-        except Exception as e:
+        except (RuntimeError, AttributeError, ValueError, SyntaxError, TypeError) as e:
             logger.error("Failed to load class names from model metadata: %s", e)
-            return dict()
+            return {}
         logger.error("Model metadata contains no class names")
-        return dict()
+        return {}
 
     def _preprocess(self, image: np.ndarray) -> tuple[np.ndarray, float, int, int]:
         # image:    BGR ndarray (H, W, 3) uint8

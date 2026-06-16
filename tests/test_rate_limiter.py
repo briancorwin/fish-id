@@ -1,5 +1,5 @@
+# pylint: disable=protected-access,import-outside-toplevel,import-error,wrong-import-order
 import time
-import pytest
 from unittest.mock import patch
 from rate_limiter import RateLimiter
 
