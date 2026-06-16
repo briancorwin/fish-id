@@ -1,0 +1,50 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+
+jobs:
+  deploy-frontend:
+    name: Deploy Firebase Hosting
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Get Cloud Run URL
+        id: cloud-run-url
+        run: |
+          URL=$(gcloud run services describe fish-id \
+            --region ${{ secrets.GCP_REGION }} \
+            --format 'value(status.url)')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+      - name: Inject Cloud Run URL into frontend
+        run: |
+          sed -i "s|https://YOUR_CLOUD_RUN_URL|${{ steps.cloud-run-url.outputs.url }}|g" \
+            frontend/public/js/app.js
+
+      - name: Set Firebase project
+        run: |
+          sed -i "s/GCP_PROJECT_ID/${{ secrets.GCP_PROJECT_ID }}/g" \
+            frontend/.firebaserc
+
+      - name: Deploy to Firebase Hosting
+        run: npx firebase-tools@latest deploy --only hosting --project ${{ secrets.GCP_PROJECT_ID }} --non-interactive
+        working-directory: frontend
