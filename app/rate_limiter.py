@@ -9,7 +9,7 @@ class RateLimiter:
     def __init__(self, requests_per_minute: int = 5, burst: int = 3):
         self.rpm = requests_per_minute
         self.burst = burst
-        self._buckets = defaultdict(lambda: {"tokens": burst, "last_refill": time.time()})
+        self._buckets: defaultdict[str, dict[str, float]] = defaultdict(lambda: {"tokens": burst, "last_refill": time.time()})
         self._lock = threading.Lock()
 
     def _refill(self, bucket: dict):

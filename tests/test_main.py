@@ -1,6 +1,6 @@
+# pylint: disable=protected-access,import-error,wrong-import-order
 import io
 import cv2
-import pytest
 from unittest.mock import patch
 import main
 from helpers import make_jpeg, make_onnx_output
@@ -143,7 +143,7 @@ class TestDetectEndpoint:
         assert "Internal model error" in resp.get_json()["error"]
 
     def test_cv2_error_in_detect_returns_500(self, client):
-        with patch.object(main._identifier, 'detect', side_effect=cv2.error()):
+        with patch.object(main._identifier, 'detect', side_effect=cv2.error()):  # pylint: disable=not-callable
             resp = client.post("/detect",
                                data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
                                content_type="multipart/form-data")

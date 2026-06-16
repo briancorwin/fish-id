@@ -2,6 +2,7 @@
 
 All GCP client calls are mocked. No real infrastructure or credentials required.
 """
+# pylint: disable=wrong-import-position,import-outside-toplevel
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch

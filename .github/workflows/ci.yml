@@ -24,6 +24,7 @@ jobs:
             app/requirements.txt
             training/requirements.txt
             pipeline/requirements.txt
+            scripts/requirements.txt
             tests/requirements.txt
 
       - name: Install dependencies
@@ -31,14 +32,18 @@ jobs:
           pip install -r app/requirements.txt
           pip install -r training/requirements.txt
           pip install -r pipeline/requirements.txt
+          pip install -r scripts/requirements.txt
           pip install -r tests/requirements.txt
-          pip install pylint
+          pip install pylint mypy
 
       - name: Run tests
         run: pytest tests/ -v
 
       - name: Run pylint
-        run: pylint app/main.py app/rate_limiter.py --fail-under=7.0
+        run: pylint app/ training/ pipeline/ scripts/ tests/ --fail-under=7.0
+
+      - name: Run mypy
+        run: mypy app/ training/ pipeline/ scripts/ tests/ --ignore-missing-imports
 
   dependency-scan:
     name: Dependency Scan

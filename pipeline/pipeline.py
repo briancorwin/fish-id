@@ -1,4 +1,5 @@
 """Vertex AI Pipeline: CPU path uses a container component; GPU path submits a Spot Custom Job via the aiplatform SDK."""
+# pylint: disable=import-outside-toplevel
 import logging
 from pathlib import Path
 
@@ -39,7 +40,7 @@ def run_gpu_training_job(
     from google.cloud import aiplatform
     from google.cloud.aiplatform_v1.types.custom_job import Scheduling
 
-    aiplatform.init(project=project, location=region)
+    aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
 
     worker_pool_specs = [{
         "machine_spec": {
@@ -94,17 +95,17 @@ def register_model(
         location=region,
     )
 
-    upload_kwargs: dict = dict(
-        display_name="fish-id",
-        artifact_uri=artifact_uri,
+    upload_kwargs: dict = {
+        "display_name": "fish-id",
+        "artifact_uri": artifact_uri,
         # Required by the API but never used: we serve from Cloud Run, not Vertex AI.
         # The Cloud Run image URI would be more accurate but isn't knowable here —
         # it's built by the deploy workflow that runs *after* this step completes.
-        serving_container_image_uri="us-docker.pkg.dev/vertex-ai/prediction/onnx-cpu.1-14:latest",
-        is_default_version=True,
-        version_aliases=["latest", "production"],
-        version_description=run_id,
-    )
+        "serving_container_image_uri": "us-docker.pkg.dev/vertex-ai/prediction/onnx-cpu.1-14:latest",
+        "is_default_version": True,
+        "version_aliases": ["latest", "production"],
+        "version_description": run_id,
+    }
     if existing:
         upload_kwargs["parent_model"] = existing[0].resource_name
 
@@ -121,7 +122,7 @@ def trigger_deploy(
     github_repo: str,
 ) -> None:
     import requests
-    from google.cloud import secretmanager
+    from google.cloud import secretmanager  # type: ignore[attr-defined]  # pylint: disable=no-name-in-module
 
     client = secretmanager.SecretManagerServiceClient()
     secret_name = f"projects/{project}/secrets/fish-id-github-deploy-token/versions/latest"
@@ -151,9 +152,9 @@ def fish_id_training_pipeline(
     github_repo: str,
     cpu_only: bool = False,
 ) -> None:
-    with dsl.If(cpu_only == True):
+    with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
         cpu_train = (
-            run_training_job(
+            run_training_job(  # pylint: disable=no-member
                 run_id=run_id,
                 training_bucket=training_bucket,
                 model_bucket=model_bucket,
