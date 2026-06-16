@@ -10,7 +10,7 @@ import os
 import sys
 from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import ANY, MagicMock, mock_open, patch
 
 import pytest
 import yaml
@@ -101,24 +101,97 @@ class TestConfig:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: _train_model
+# Test 3: _download_checkpoint
+# ---------------------------------------------------------------------------
+
+class TestDownloadCheckpoint:
+    _PREFIX = "runs/run-001/checkpoint"
+
+    def test_returns_none_when_no_checkpoint_in_gcs(self, tmp_path):
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value.exists.return_value = False
+        result = train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        assert result is None
+
+    def test_checks_correct_gcs_path(self, tmp_path):
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value.exists.return_value = False
+        train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        mock_bucket.blob.assert_called_with(f"{self._PREFIX}/weights/last.pt")
+
+    def test_returns_local_path_when_checkpoint_exists(self, tmp_path):
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value.exists.return_value = True
+        result = train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        assert result == tmp_path / "last.pt"
+
+    def test_downloads_to_correct_local_path(self, tmp_path):
+        mock_bucket = MagicMock()
+        mock_bucket.blob.return_value.exists.return_value = True
+        train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        mock_bucket.blob.return_value.download_to_filename.assert_called_once_with(
+            str(tmp_path / "last.pt")
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test 4: GCSCheckpointCallback
+# ---------------------------------------------------------------------------
+
+class TestGCSCheckpointCallback:
+    _PREFIX = "runs/run-001/checkpoint"
+
+    def test_uploads_last_pt_after_epoch(self, tmp_path):
+        (tmp_path / "weights").mkdir()
+        (tmp_path / "weights" / "last.pt").write_bytes(b"checkpoint")
+
+        mock_bucket = MagicMock()
+        mock_trainer = MagicMock()
+        mock_trainer.save_dir = tmp_path
+
+        callback = train_module.GCSCheckpointCallback(mock_bucket, self._PREFIX)
+        callback.on_train_epoch_end(mock_trainer)
+
+        mock_bucket.blob.assert_called_with(f"{self._PREFIX}/weights/last.pt")
+        mock_bucket.blob.return_value.upload_from_filename.assert_called_once_with(
+            str(tmp_path / "weights" / "last.pt")
+        )
+
+    def test_skips_upload_when_last_pt_missing(self, tmp_path):
+        mock_bucket = MagicMock()
+        mock_trainer = MagicMock()
+        mock_trainer.save_dir = tmp_path
+
+        callback = train_module.GCSCheckpointCallback(mock_bucket, self._PREFIX)
+        callback.on_train_epoch_end(mock_trainer)
+
+        mock_bucket.blob.return_value.upload_from_filename.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Test 5: _train_model
 # ---------------------------------------------------------------------------
 
 class TestTrainModel:
     _DATA_YAML = "/app/data/data.yaml"
-    _CHECKPOINT_DIR = "/gcs/my-model-bucket/fish-id-runs/run-001"
-    _LAST_PT = "/gcs/my-model-bucket/fish-id-runs/run-001/weights/last.pt"
+    _CHECKPOINT_PREFIX = "runs/run-001/checkpoint"
+    _CHECKPOINT_PATH = Path("/tmp/yolo-checkpoint/last.pt")
+
+    def _make_bucket(self):
+        return MagicMock()
 
     def test_fresh_start_yolo_instantiated_with_base_model(self):
-        with patch("os.path.exists", return_value=False), \
+        with patch.object(train_module, "_download_checkpoint", return_value=None), \
              patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, gcs_checkpoint_dir=self._CHECKPOINT_DIR)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                      checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
         mock_yolo.assert_called_once_with("yolov8n.pt")
 
     def test_fresh_start_train_called_with_correct_hyperparams(self):
-        with patch("os.path.exists", return_value=False), \
+        with patch.object(train_module, "_download_checkpoint", return_value=None), \
              patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, gcs_checkpoint_dir=self._CHECKPOINT_DIR)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                      checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
         mock_yolo.return_value.train.assert_called_once_with(
             data=self._DATA_YAML,
             epochs=5,
@@ -128,39 +201,56 @@ class TestTrainModel:
             lr0=0.001,
             workers=4,
             cache=False,
-            project=self._CHECKPOINT_DIR,
+            project="/tmp/yolo-runs",
             name=".",
             save=True,
-            save_period=1,
         )
 
     def test_fresh_start_returns_yolo_model(self):
-        with patch("os.path.exists", return_value=False), \
+        with patch.object(train_module, "_download_checkpoint", return_value=None), \
              patch.object(train_module, "YOLO") as mock_yolo:
-            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, gcs_checkpoint_dir=self._CHECKPOINT_DIR)
+            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                               checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
         assert result is mock_yolo.return_value
 
-    def test_resume_loads_last_checkpoint(self):
-        with patch("os.path.exists", return_value=True), \
+    def test_fresh_start_callback_registered(self):
+        with patch.object(train_module, "_download_checkpoint", return_value=None), \
              patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, gcs_checkpoint_dir=self._CHECKPOINT_DIR)
-        mock_yolo.assert_called_once_with(self._LAST_PT)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                      checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
+        mock_yolo.return_value.add_callback.assert_called_once_with("on_train_epoch_end", ANY)
+
+    def test_resume_loads_checkpoint_path(self):
+        with patch.object(train_module, "_download_checkpoint", return_value=self._CHECKPOINT_PATH), \
+             patch.object(train_module, "YOLO") as mock_yolo:
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                      checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
+        mock_yolo.assert_called_once_with(str(self._CHECKPOINT_PATH))
 
     def test_resume_calls_train_with_resume_true(self):
-        with patch("os.path.exists", return_value=True), \
+        with patch.object(train_module, "_download_checkpoint", return_value=self._CHECKPOINT_PATH), \
              patch.object(train_module, "YOLO") as mock_yolo:
-            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, gcs_checkpoint_dir=self._CHECKPOINT_DIR)
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                      checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
         mock_yolo.return_value.train.assert_called_once_with(resume=True)
 
     def test_resume_returns_yolo_model(self):
-        with patch("os.path.exists", return_value=True), \
+        with patch.object(train_module, "_download_checkpoint", return_value=self._CHECKPOINT_PATH), \
              patch.object(train_module, "YOLO") as mock_yolo:
-            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML, gcs_checkpoint_dir=self._CHECKPOINT_DIR)
+            result = train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                               checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
         assert result is mock_yolo.return_value
+
+    def test_resume_callback_registered(self):
+        with patch.object(train_module, "_download_checkpoint", return_value=self._CHECKPOINT_PATH), \
+             patch.object(train_module, "YOLO") as mock_yolo:
+            train_module._train_model(CONFIG_FIXTURE, workers=4, data_yaml_path=self._DATA_YAML,
+                                      checkpoint_bucket=self._make_bucket(), checkpoint_prefix=self._CHECKPOINT_PREFIX)
+        mock_yolo.return_value.add_callback.assert_called_once_with("on_train_epoch_end", ANY)
 
 
 # ---------------------------------------------------------------------------
-# Test 5: _download_training_data
+# Test 6: _download_training_data
 # ---------------------------------------------------------------------------
 
 class TestDownloadTrainingData:
@@ -331,15 +421,14 @@ class TestMain:
 
         assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/app/data/data.yaml"
 
-    def test_gcs_checkpoint_dir_contains_model_bucket_and_run_id(self, monkeypatch):
+    def test_checkpoint_prefix_contains_run_id(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", self._ARGV)
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
             train_module.main()
 
-        gcs_checkpoint_dir = mocks["_train_model"].call_args.kwargs["gcs_checkpoint_dir"]
-        assert "my-model-bucket" in gcs_checkpoint_dir
-        assert "run-test-001" in gcs_checkpoint_dir
+        checkpoint_prefix = mocks["_train_model"].call_args.kwargs["checkpoint_prefix"]
+        assert "run-test-001" in checkpoint_prefix
 
     def test_missing_args_exits(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["train.py"])

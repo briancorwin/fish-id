@@ -15,17 +15,45 @@ from ultralytics import YOLO
 _logger = logging.getLogger(__name__)
 
 
+class GCSCheckpointCallback:
+    def __init__(self, bucket: gcs.Bucket, gcs_prefix: str) -> None:
+        self._bucket = bucket
+        self._gcs_prefix = gcs_prefix
+
+    def on_train_epoch_end(self, trainer) -> None:
+        local = Path(trainer.save_dir) / "weights" / "last.pt"
+        if not local.exists():
+            _logger.warning("[train] checkpoint not found at %s — skipping upload", local)
+            return
+        dest = f"{self._gcs_prefix}/weights/last.pt"
+        self._bucket.blob(dest).upload_from_filename(str(local))
+        _logger.info("[train] checkpoint uploaded to gs://%s/%s", self._bucket.name, dest)
+
+
 def _load_config() -> dict:
     with open("/app/config.yaml") as f:
         return yaml.safe_load(f)
 
 
-def _train_model(config: dict, workers: int, data_yaml_path: str, gcs_checkpoint_dir: str) -> YOLO:
-    last_checkpoint_path = os.path.join(gcs_checkpoint_dir, "weights", "last.pt")
+def _download_checkpoint(bucket: gcs.Bucket, gcs_prefix: str, local_dir: Path) -> Path | None:
+    blob = bucket.blob(f"{gcs_prefix}/weights/last.pt")
+    if not blob.exists():
+        return None
+    local_path = local_dir / "last.pt"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    blob.download_to_filename(str(local_path))
+    _logger.info("[train] checkpoint downloaded from gs://%s/%s", bucket.name, blob.name)
+    return local_path
 
-    if os.path.exists(last_checkpoint_path):
-        _logger.info("[train] checkpoint found — resuming from %s", last_checkpoint_path)
-        model = YOLO(last_checkpoint_path)
+
+def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_bucket: gcs.Bucket, checkpoint_prefix: str) -> YOLO:
+    checkpoint_path = _download_checkpoint(checkpoint_bucket, checkpoint_prefix, Path("/tmp/yolo-checkpoint"))
+    callback = GCSCheckpointCallback(checkpoint_bucket, checkpoint_prefix)
+
+    if checkpoint_path is not None:
+        _logger.info("[train] resuming from checkpoint %s", checkpoint_path)
+        model = YOLO(str(checkpoint_path))
+        model.add_callback("on_train_epoch_end", callback.on_train_epoch_end)
         model.train(resume=True)
     else:
         _logger.info(
@@ -34,6 +62,7 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, gcs_checkpoint
             config["optimizer"], config["lr0"], workers,
         )
         model = YOLO(config["model"])
+        model.add_callback("on_train_epoch_end", callback.on_train_epoch_end)
         model.train(
             data=data_yaml_path,
             epochs=config["epochs"],
@@ -43,10 +72,12 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, gcs_checkpoint
             lr0=config["lr0"],
             workers=workers,
             cache=False,
-            project=gcs_checkpoint_dir,
+            # Keep output in /tmp so YOLO has a writable directory; all other
+            # artifacts are discarded when the container exits.
+            project="/tmp/yolo-runs",
+            # Prevent YOLO from auto-incrementing to train/, train2/, etc.
             name=".",
             save=True,
-            save_period=1,
         )
 
     _logger.info("[train] YOLO training finished. save_dir=%s", model.trainer.save_dir)
@@ -211,14 +242,18 @@ def main() -> None:
     data_yaml_path = str(local_data_dir / "data.yaml")
     _logger.info("[train] data_yaml_path=%s", data_yaml_path)
 
-    # FUSE path so YOLO can write checkpoints directly to GCS each epoch without
-    # hooking into its internal save logic; all other GCS access uses the client.
-    gcs_checkpoint_dir = f"/gcs/{model_bucket}/runs/{run_id}"
-    _logger.info("[train] checkpoint dir=%s", gcs_checkpoint_dir)
+    checkpoint_prefix = f"runs/{run_id}/checkpoint"
+    _logger.info("[train] checkpoint bucket=%s prefix=%s", model_bucket, checkpoint_prefix)
 
     _logger.info("[train] starting training (workers=%d)", cpu_count)
     start = time.time()
-    model = _train_model(config, workers=cpu_count, data_yaml_path=data_yaml_path, gcs_checkpoint_dir=gcs_checkpoint_dir)
+    model = _train_model(
+        config,
+        workers=cpu_count,
+        data_yaml_path=data_yaml_path,
+        checkpoint_bucket=storage_client.bucket(model_bucket),
+        checkpoint_prefix=checkpoint_prefix,
+    )
     duration = time.time() - start
     _logger.info("[train] training complete in %.1f seconds", duration)
 

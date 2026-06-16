@@ -1,4 +1,4 @@
-"""Vertex AI Pipeline: run training container directly as a container component."""
+"""Vertex AI Pipeline: CPU path uses a container component; GPU path submits a Spot Custom Job via the aiplatform SDK."""
 import logging
 from pathlib import Path
 
@@ -21,6 +21,54 @@ def run_training_job(
             "--training-bucket", training_bucket,
             "--model-bucket", model_bucket,
         ],
+    )
+
+
+@dsl.component(
+    base_image="python:3.11-slim",
+    packages_to_install=["google-cloud-aiplatform>=1.60.0"],
+)
+def run_gpu_training_job(
+    project: str,
+    region: str,
+    training_image: str,
+    run_id: str,
+    training_bucket: str,
+    model_bucket: str,
+) -> None:
+    from google.cloud import aiplatform
+    from google.cloud.aiplatform_v1.types.custom_job import Scheduling
+
+    aiplatform.init(project=project, location=region)
+
+    worker_pool_specs = [{
+        "machine_spec": {
+            "machine_type": "n1-standard-4",
+            "accelerator_type": "NVIDIA_TESLA_T4",
+            "accelerator_count": 1,
+        },
+        "replica_count": 1,
+        "container_spec": {
+            "image_uri": training_image,
+            "command": ["python", "/app/train.py"],
+            "args": [
+                f"--run-id={run_id}",
+                f"--training-bucket={training_bucket}",
+                f"--model-bucket={model_bucket}",
+            ],
+        },
+    }]
+
+    custom_job = aiplatform.CustomJob(
+        display_name=f"fish-id-{run_id}",
+        worker_pool_specs=worker_pool_specs,
+        project=project,
+        location=region,
+    )
+    custom_job.run(
+        scheduling_strategy=Scheduling.Strategy.SPOT,
+        restart_job_on_worker_restart=True,
+        sync=True,
     )
 
 
@@ -124,18 +172,14 @@ def fish_id_training_pipeline(
         trigger_deploy(project=project, github_repo=github_repo).after(reg_cpu)
 
     with dsl.Else():
-        gpu_train = (
-            run_training_job(
-                run_id=run_id,
-                training_bucket=training_bucket,
-                model_bucket=model_bucket,
-            )
-            .set_container_image(training_image)
-            .set_cpu_request("4").set_cpu_limit("4")
-            .set_memory_request("16G").set_memory_limit("16G")
-            .set_accelerator_type("NVIDIA_TESLA_T4").set_accelerator_limit("1")
-            .set_retry(num_retries=3)
-        )
+        gpu_train = run_gpu_training_job(
+            project=project,
+            region=region,
+            training_image=training_image,
+            run_id=run_id,
+            training_bucket=training_bucket,
+            model_bucket=model_bucket,
+        ).set_retry(num_retries=2)
         reg_gpu = register_model(
             project=project,
             region=region,
