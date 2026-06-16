@@ -22,10 +22,12 @@ class GCSCheckpointCallback:
 
     def on_train_epoch_end(self, trainer) -> None:
         local = Path(trainer.save_dir) / "weights" / "last.pt"
-        if local.exists():
-            dest = f"{self._gcs_prefix}/weights/last.pt"
-            self._bucket.blob(dest).upload_from_filename(str(local))
-            _logger.info("[train] checkpoint uploaded to gs://%s/%s", self._bucket.name, dest)
+        if not local.exists():
+            _logger.warning("[train] checkpoint not found at %s — skipping upload", local)
+            return
+        dest = f"{self._gcs_prefix}/weights/last.pt"
+        self._bucket.blob(dest).upload_from_filename(str(local))
+        _logger.info("[train] checkpoint uploaded to gs://%s/%s", self._bucket.name, dest)
 
 
 def _load_config() -> dict:
@@ -70,10 +72,12 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_buc
             lr0=config["lr0"],
             workers=workers,
             cache=False,
+            # Keep output in /tmp so YOLO has a writable directory; all other
+            # artifacts are discarded when the container exits.
             project="/tmp/yolo-runs",
+            # Prevent YOLO from auto-incrementing to train/, train2/, etc.
             name=".",
             save=True,
-            save_period=1,
         )
 
     _logger.info("[train] YOLO training finished. save_dir=%s", model.trainer.save_dir)

@@ -204,7 +204,6 @@ class TestTrainModel:
             project="/tmp/yolo-runs",
             name=".",
             save=True,
-            save_period=1,
         )
 
     def test_fresh_start_returns_yolo_model(self):
