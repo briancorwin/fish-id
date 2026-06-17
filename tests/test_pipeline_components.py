@@ -9,12 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.modules.setdefault("google.cloud.aiplatform", MagicMock())
-sys.modules.setdefault("google.cloud.secretmanager", MagicMock())
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pipeline.pipeline import fish_id_training_pipeline, register_model, run_gpu_training_job, trigger_deploy  # noqa: E402
+from pipeline.pipeline import fish_id_training_pipeline, register_model, train_model, trigger_deploy  # noqa: E402
 
 
 class TestPipelineCompilation:
@@ -39,59 +36,18 @@ class TestPipelineCompilation:
         assert spec["pipelineInfo"]["name"] == "fish-id-training-pipeline"
 
 
-class TestRunGpuTrainingJob:
-    def _run(self, mock_aip: MagicMock, mock_scheduling_module: MagicMock, **kwargs) -> None:
-        with patch.dict(sys.modules, {
-            "google.cloud.aiplatform": mock_aip,
-            "google.cloud.aiplatform_v1": MagicMock(),
-            "google.cloud.aiplatform_v1.types": MagicMock(),
-            "google.cloud.aiplatform_v1.types.custom_job": mock_scheduling_module,
-        }):
-            run_gpu_training_job.python_func(
-                project=kwargs.get("project", "test-project"),
-                region=kwargs.get("region", "us-central1"),
-                training_image=kwargs.get("training_image", "gcr.io/test/image:v1"),
-                run_id=kwargs.get("run_id", "run-2026-06-14-120000"),
-                training_bucket=kwargs.get("training_bucket", "test-training-bucket"),
-                model_bucket=kwargs.get("model_bucket", "test-model-bucket"),
-            )
+class TestTrainModel:
+    def test_component_has_expected_inputs(self):
+        inputs = train_model.component_spec.inputs
+        expected = {
+            "run_id", "training_bucket", "model_bucket", "model_name",
+            "epochs", "imgsz", "batch", "optimizer", "lr0",
+        }
+        assert set(inputs.keys()) == expected
 
-    def test_creates_custom_job_with_t4_gpu(self):
-        mock_aip = MagicMock()
-        mock_scheduling_module = MagicMock()
-        self._run(mock_aip, mock_scheduling_module)
-
-        kwargs = mock_aip.CustomJob.call_args.kwargs
-        worker_specs = kwargs["worker_pool_specs"]
-        assert worker_specs[0]["machine_spec"]["accelerator_type"] == "NVIDIA_TESLA_T4"
-        assert worker_specs[0]["machine_spec"]["accelerator_count"] == 1
-
-    def test_runs_with_spot_scheduling(self):
-        mock_aip = MagicMock()
-        mock_scheduling_module = MagicMock()
-        self._run(mock_aip, mock_scheduling_module)
-
-        run_kwargs = mock_aip.CustomJob.return_value.run.call_args.kwargs
-        assert run_kwargs["scheduling_strategy"] == mock_scheduling_module.Scheduling.Strategy.SPOT
-        assert run_kwargs["restart_job_on_worker_restart"] is True
-        assert run_kwargs["sync"] is True
-
-    def test_passes_run_id_in_display_name(self):
-        mock_aip = MagicMock()
-        mock_scheduling_module = MagicMock()
-        self._run(mock_aip, mock_scheduling_module, run_id="run-abc-123")
-
-        display_name = mock_aip.CustomJob.call_args.kwargs["display_name"]
-        assert "run-abc-123" in display_name
-
-    def test_passes_run_id_in_container_args(self):
-        mock_aip = MagicMock()
-        mock_scheduling_module = MagicMock()
-        self._run(mock_aip, mock_scheduling_module, run_id="run-xyz")
-
-        worker_specs = mock_aip.CustomJob.call_args.kwargs["worker_pool_specs"]
-        args = worker_specs[0]["container_spec"]["args"]
-        assert any("run-xyz" in str(a) for a in args)
+    def test_component_uses_pytorch_base_image(self):
+        image = train_model.component_spec.implementation.container.image
+        assert "pytorch" in image
 
 
 class TestRegisterModel:

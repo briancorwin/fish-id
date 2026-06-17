@@ -4,12 +4,10 @@
 Manually submit a Vertex AI training pipeline run.
 
 Usage:
-    python scripts/trigger-training.py [--image <image-uri>] [--cpu-only] [--run-id <id>]
+    python scripts/trigger-training.py [--cpu-only] [--run-id <id>]
 
 Flags:
-    --image      Training container image URI. Defaults to :latest in Artifact Registry.
-    --cpu-only   Run on CPU only (n4-standard-16, no GPU). Uses STANDARD scheduling
-                 strategy instead of SPOT. Useful when GPU quota is unavailable.
+    --cpu-only   Run on CPU only (no GPU). Useful when GPU quota is unavailable.
     --run-id     Reuse an existing run ID to restart an interrupted run. Defaults to a
                  new timestamped ID.
 
@@ -34,10 +32,6 @@ def _make_run_id() -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Submit a Vertex AI training pipeline run.")
     parser.add_argument(
-        "--image",
-        help="Training container image URI. Defaults to the :latest tag in Artifact Registry.",
-    )
-    parser.add_argument(
         "--cpu-only",
         action="store_true",
         help="Run on CPU only — omits GPU accelerator spec. Useful when GPU quota is unavailable.",
@@ -54,20 +48,14 @@ def main() -> None:
     model_bucket = os.environ["MODEL_BUCKET"]
     github_repo = os.environ["GITHUB_REPO"]
 
-    if args.image:
-        training_image = args.image
-    else:
-        training_image = f"{region}-docker.pkg.dev/{project}/fish-id/fish-id-train:latest"
-
     run_id = args.run_id if args.run_id else _make_run_id()
     pipeline_template_uri = f"gs://{model_bucket}/pipeline/fish-id-training-pipeline.json"
 
     print(f"\nSubmitting pipeline run: {run_id}")
     print(f"  Template:        {pipeline_template_uri}")
-    print(f"  Training image:  {training_image}")
     print(f"  Training bucket: {training_bucket}")
     print(f"  Model bucket:    {model_bucket}")
-    print(f"  GPU:             {'no (CPU only)' if args.cpu_only else 'yes (T4)'}")
+    print(f"  GPU:             {'no (CPU only)' if args.cpu_only else 'yes (T4 Spot)'}")
 
     aiplatform.init(project=project, location=region)
     pipeline_job = aiplatform.PipelineJob(
@@ -77,7 +65,6 @@ def main() -> None:
         parameter_values={
             "training_bucket": training_bucket,
             "model_bucket": model_bucket,
-            "training_image": training_image,
             "run_id": run_id,
             "project": project,
             "region": region,
