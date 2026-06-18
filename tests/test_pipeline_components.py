@@ -45,9 +45,9 @@ class TestTrainModel:
         }
         assert set(inputs.keys()) == expected
 
-    def test_component_uses_pytorch_base_image(self):
+    def test_component_uses_artifact_registry_image(self):
         image = train_model.component_spec.implementation.container.image
-        assert "pytorch" in image
+        assert "fish-id-train" in image
 
 
 class TestRegisterModel:

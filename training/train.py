@@ -206,51 +206,44 @@ def _upload_artifacts(storage_client: gcs.Client, model_bucket: str, run_id: str
     _logger.info("[train] uploaded metadata")
 
 
-def main() -> None:
+def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str,
+    training_bucket: str,
+    model_bucket: str,
+    model_name: str,
+    epochs: int,
+    imgsz: int,
+    batch: int,
+    optimizer: str,
+    lr0: float,
+) -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--training-bucket", required=True)
-    parser.add_argument("--model-bucket", required=True)
-    parsed = parser.parse_args()
-
-    run_id = parsed.run_id
-    training_bucket = parsed.training_bucket
-    model_bucket = parsed.model_bucket
+    config = {
+        "model": model_name,
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "batch": batch,
+        "optimizer": optimizer,
+        "lr0": lr0,
+    }
 
     cpu_count = os.cpu_count() or 1
-    _logger.info("[train] cpu_count=%d", cpu_count)
-
     os.environ["OMP_NUM_THREADS"] = str(cpu_count)
     os.environ["MKL_NUM_THREADS"] = str(cpu_count)
-    _logger.info("[train] set OMP_NUM_THREADS=%d MKL_NUM_THREADS=%d", cpu_count, cpu_count)
+    _logger.info("[train] run_id=%s training_bucket=%s model_bucket=%s cpu_count=%d", run_id, training_bucket, model_bucket, cpu_count)
 
-    _logger.info("[train] run_id=%s training_bucket=%s model_bucket=%s", run_id, training_bucket, model_bucket)
-
-    _logger.info("[train] loading config")
-    config = _load_config()
-    _logger.info("[train] config loaded: %s", config)
-
-    _logger.info("[train] initializing GCS client")
     storage_client = gcs.Client()
-    _logger.info("[train] GCS client ready")
 
-    _logger.info("[train] reading dataset generation from gs://%s/data.yaml", training_bucket)
     dataset_generation = _read_dataset_generation(storage_client, training_bucket)
     _logger.info("[train] dataset_generation=%d", dataset_generation)
 
     local_data_dir = Path("/app/data")
-    _logger.info("[train] downloading training data to %s", local_data_dir)
     _download_training_data(storage_client, training_bucket, local_data_dir)
 
     data_yaml_path = str(local_data_dir / "data.yaml")
-    _logger.info("[train] data_yaml_path=%s", data_yaml_path)
-
     checkpoint_prefix = f"runs/{run_id}/checkpoint"
-    _logger.info("[train] checkpoint bucket=%s prefix=%s", model_bucket, checkpoint_prefix)
 
-    _logger.info("[train] starting training (workers=%d)", cpu_count)
     start = time.time()
     model = _train_model(
         config,
@@ -262,16 +255,35 @@ def main() -> None:
     duration = time.time() - start
     _logger.info("[train] training complete in %.1f seconds", duration)
 
-    _logger.info("[train] exporting ONNX")
     onnx_path = _export_onnx(model)
-
-    _logger.info("[train] building metadata")
     metadata = _build_metadata(run_id, config, model, duration, cpu_count, dataset_generation)
-
-    _logger.info("[train] uploading artifacts to gs://%s", model_bucket)
     _upload_artifacts(storage_client, model_bucket, run_id, onnx_path, metadata)
 
     _logger.info("[train] done. artifacts uploaded to gs://%s/runs/%s/", model_bucket, run_id)
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--training-bucket", required=True)
+    parser.add_argument("--model-bucket", required=True)
+    parsed = parser.parse_args()
+
+    config = _load_config()
+
+    run(
+        run_id=parsed.run_id,
+        training_bucket=parsed.training_bucket,
+        model_bucket=parsed.model_bucket,
+        model_name=config["model"],
+        epochs=config["epochs"],
+        imgsz=config["imgsz"],
+        batch=config["batch"],
+        optimizer=config["optimizer"],
+        lr0=config["lr0"],
+    )
 
 
 if __name__ == "__main__":
