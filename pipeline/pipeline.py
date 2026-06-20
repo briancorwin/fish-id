@@ -56,7 +56,7 @@ _TrainGpuJobOp = create_custom_training_job_from_component(
     machine_type="n1-standard-4",
     accelerator_type="NVIDIA_TESLA_T4",
     accelerator_count=1,
-    strategy="FLEX_START",
+    strategy="SPOT",
     restart_job_on_worker_restart=True,
 )
 
