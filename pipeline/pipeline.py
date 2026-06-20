@@ -1,76 +1,64 @@
-"""Vertex AI Pipeline: CPU path uses a container component; GPU path submits a Spot Custom Job via the aiplatform SDK."""
+"""Vertex AI Pipeline: training runs as a dsl.component wrapped as a Vertex AI Custom Job for the GPU Spot path."""
 # pylint: disable=import-outside-toplevel
 import logging
+import os
 from pathlib import Path
 
+import yaml
+
+from google_cloud_pipeline_components.v1.custom_job import create_custom_training_job_from_component
 from kfp import compiler, dsl
+
+_CONFIG = yaml.safe_load(
+    (Path(__file__).parent.parent / "training" / "config.yaml").read_text(encoding="utf-8")
+)
+
+# Resolved at pipeline compile time from CI env vars (GCP_REGION, GCP_PROJECT_ID).
+# Override by setting TRAINING_IMAGE explicitly.
+_TRAINING_IMAGE = (
+    os.environ.get("TRAINING_IMAGE")
+    or f"{os.environ.get('GCP_REGION', 'us-central1')}-docker.pkg.dev"
+       f"/{os.environ.get('GCP_PROJECT_ID', 'unknown')}/fish-id/fish-id-train:latest"
+)
 
 _logger = logging.getLogger(__name__)
 
 
-@dsl.container_component
-def run_training_job(
+@dsl.component(base_image=_TRAINING_IMAGE)
+def train_model(
     run_id: str,
     training_bucket: str,
     model_bucket: str,
-) -> dsl.ContainerSpec:
-    return dsl.ContainerSpec(
-        image="placeholder",
-        command=["python", "/app/train.py"],
-        args=[
-            "--run-id", run_id,
-            "--training-bucket", training_bucket,
-            "--model-bucket", model_bucket,
-        ],
-    )
-
-
-@dsl.component(
-    base_image="python:3.11-slim",
-    packages_to_install=["google-cloud-aiplatform>=1.60.0"],
-)
-def run_gpu_training_job(
-    project: str,
-    region: str,
-    training_image: str,
-    run_id: str,
-    training_bucket: str,
-    model_bucket: str,
+    model_name: str,
+    epochs: int,
+    imgsz: int,
+    batch: int,
+    optimizer: str,
+    lr0: float,
 ) -> None:
-    from google.cloud import aiplatform
-    from google.cloud.aiplatform_v1.types.custom_job import Scheduling
-
-    aiplatform.init(project=project, location=region, staging_bucket=f"gs://{model_bucket}")
-
-    worker_pool_specs = [{
-        "machine_spec": {
-            "machine_type": "n1-standard-4",
-            "accelerator_type": "NVIDIA_TESLA_T4",
-            "accelerator_count": 1,
-        },
-        "replica_count": 1,
-        "container_spec": {
-            "image_uri": training_image,
-            "command": ["python", "/app/train.py"],
-            "args": [
-                f"--run-id={run_id}",
-                f"--training-bucket={training_bucket}",
-                f"--model-bucket={model_bucket}",
-            ],
-        },
-    }]
-
-    custom_job = aiplatform.CustomJob(
-        display_name=f"fish-id-{run_id}",
-        worker_pool_specs=worker_pool_specs,
-        project=project,
-        location=region,
+    import train  # installed via PYTHONPATH=/app in the training image
+    train.run(
+        run_id=run_id,
+        training_bucket=training_bucket,
+        model_bucket=model_bucket,
+        model_name=model_name,
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        optimizer=optimizer,
+        lr0=lr0,
     )
-    custom_job.run(
-        scheduling_strategy=Scheduling.Strategy.SPOT,
-        restart_job_on_worker_restart=True,
-        sync=True,
-    )
+
+
+_TrainGpuJobOp = create_custom_training_job_from_component(
+    train_model,
+    display_name="fish-id-gpu-training",
+    machine_type="n1-standard-4",
+    accelerator_type="NVIDIA_TESLA_T4",
+    accelerator_count=1,
+    strategy="FLEX_START",
+    restart_job_on_worker_restart=True,
+)
 
 
 @dsl.component(
@@ -145,47 +133,59 @@ def trigger_deploy(
 def fish_id_training_pipeline(
     training_bucket: str,
     model_bucket: str,
-    training_image: str,
     run_id: str,
     project: str,
     region: str,
     github_repo: str,
+    model_name: str = _CONFIG["model"],
+    epochs: int = _CONFIG["epochs"],
+    imgsz: int = _CONFIG["imgsz"],
+    batch: int = _CONFIG["batch"],
+    optimizer: str = _CONFIG["optimizer"],
+    lr0: float = _CONFIG["lr0"],
     cpu_only: bool = False,
 ) -> None:
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
         cpu_train = (
-            run_training_job(  # pylint: disable=no-member
+            train_model(  # pylint: disable=no-member
                 run_id=run_id,
                 training_bucket=training_bucket,
                 model_bucket=model_bucket,
+                model_name=model_name,
+                epochs=epochs,
+                imgsz=imgsz,
+                batch=batch,
+                optimizer=optimizer,
+                lr0=lr0,
             )
-            .set_container_image(training_image)
             .set_cpu_request("16").set_cpu_limit("16")
             .set_memory_request("64G").set_memory_limit("64G")
             .set_retry(num_retries=3)
         )
         reg_cpu = register_model(
-            project=project,
-            region=region,
-            model_bucket=model_bucket,
-            run_id=run_id,
+            project=project, region=region, model_bucket=model_bucket, run_id=run_id,
         ).after(cpu_train)
         trigger_deploy(project=project, github_repo=github_repo).after(reg_cpu)
 
     with dsl.Else():
-        gpu_train = run_gpu_training_job(
-            project=project,
-            region=region,
-            training_image=training_image,
-            run_id=run_id,
-            training_bucket=training_bucket,
-            model_bucket=model_bucket,
-        ).set_retry(num_retries=2)
+        gpu_train = (
+            _TrainGpuJobOp(  # pylint: disable=no-member
+                project=project,
+                location=region,
+                run_id=run_id,
+                training_bucket=training_bucket,
+                model_bucket=model_bucket,
+                model_name=model_name,
+                epochs=epochs,
+                imgsz=imgsz,
+                batch=batch,
+                optimizer=optimizer,
+                lr0=lr0,
+            )
+            .set_retry(num_retries=3)
+        )
         reg_gpu = register_model(
-            project=project,
-            region=region,
-            model_bucket=model_bucket,
-            run_id=run_id,
+            project=project, region=region, model_bucket=model_bucket, run_id=run_id,
         ).after(gpu_train)
         trigger_deploy(project=project, github_repo=github_repo).after(reg_gpu)
 

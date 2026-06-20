@@ -1,4 +1,3 @@
-import argparse
 import concurrent.futures
 import json
 import logging
@@ -9,7 +8,6 @@ from pathlib import Path
 
 import google.cloud.storage as gcs
 import torch
-import yaml
 from ultralytics import YOLO
 
 _logger = logging.getLogger(__name__)
@@ -29,10 +27,6 @@ class GCSCheckpointCallback:
         self._bucket.blob(dest).upload_from_filename(str(local))
         _logger.info("[train] checkpoint uploaded to gs://%s/%s", self._bucket.name, dest)
 
-
-def _load_config() -> dict:
-    with open("/app/config.yaml", encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 
 def _download_checkpoint(bucket: gcs.Bucket, gcs_prefix: str, local_dir: Path) -> Path | None:
@@ -206,18 +200,27 @@ def _upload_artifacts(storage_client: gcs.Client, model_bucket: str, run_id: str
     _logger.info("[train] uploaded metadata")
 
 
-def main() -> None:
+def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str,
+    training_bucket: str,
+    model_bucket: str,
+    model_name: str,
+    epochs: int,
+    imgsz: int,
+    batch: int,
+    optimizer: str,
+    lr0: float,
+) -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--training-bucket", required=True)
-    parser.add_argument("--model-bucket", required=True)
-    parsed = parser.parse_args()
-
-    run_id = parsed.run_id
-    training_bucket = parsed.training_bucket
-    model_bucket = parsed.model_bucket
+    config = {
+        "model": model_name,
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "batch": batch,
+        "optimizer": optimizer,
+        "lr0": lr0,
+    }
 
     cpu_count = os.cpu_count() or 1
     _logger.info("[train] cpu_count=%d", cpu_count)
@@ -228,9 +231,7 @@ def main() -> None:
 
     _logger.info("[train] run_id=%s training_bucket=%s model_bucket=%s", run_id, training_bucket, model_bucket)
 
-    _logger.info("[train] loading config")
-    config = _load_config()
-    _logger.info("[train] config loaded: %s", config)
+    _logger.info("[train] config: %s", config)
 
     _logger.info("[train] initializing GCS client")
     storage_client = gcs.Client()
@@ -274,5 +275,3 @@ def main() -> None:
     _logger.info("[train] done. artifacts uploaded to gs://%s/runs/%s/", model_bucket, run_id)
 
 
-if __name__ == "__main__":
-    main()
