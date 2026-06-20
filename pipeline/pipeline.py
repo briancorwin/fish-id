@@ -4,8 +4,14 @@ import logging
 import os
 from pathlib import Path
 
+import yaml
+
 from google_cloud_pipeline_components.v1.custom_job import create_custom_training_job_from_component
 from kfp import compiler, dsl
+
+_CONFIG = yaml.safe_load(
+    (Path(__file__).parent.parent / "training" / "config.yaml").read_text(encoding="utf-8")
+)
 
 # Resolved at pipeline compile time from CI env vars (GCP_REGION, GCP_PROJECT_ID).
 # Override by setting TRAINING_IMAGE explicitly.
@@ -131,12 +137,12 @@ def fish_id_training_pipeline(
     project: str,
     region: str,
     github_repo: str,
-    model_name: str = "yolov8n.pt",
-    epochs: int = 5,
-    imgsz: int = 640,
-    batch: int = 16,
-    optimizer: str = "AdamW",
-    lr0: float = 0.001,
+    model_name: str = _CONFIG["model"],
+    epochs: int = _CONFIG["epochs"],
+    imgsz: int = _CONFIG["imgsz"],
+    batch: int = _CONFIG["batch"],
+    optimizer: str = _CONFIG["optimizer"],
+    lr0: float = _CONFIG["lr0"],
     cpu_only: bool = False,
 ) -> None:
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
