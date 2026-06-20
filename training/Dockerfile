@@ -19,5 +19,3 @@ COPY training/train.py /app/train.py
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
-
-ENTRYPOINT ["python", "/app/train.py"]

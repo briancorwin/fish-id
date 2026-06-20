@@ -1,4 +1,3 @@
-import argparse
 import concurrent.futures
 import json
 import logging
@@ -9,7 +8,6 @@ from pathlib import Path
 
 import google.cloud.storage as gcs
 import torch
-import yaml
 from ultralytics import YOLO
 
 _logger = logging.getLogger(__name__)
@@ -29,10 +27,6 @@ class GCSCheckpointCallback:
         self._bucket.blob(dest).upload_from_filename(str(local))
         _logger.info("[train] checkpoint uploaded to gs://%s/%s", self._bucket.name, dest)
 
-
-def _load_config() -> dict:
-    with open("/app/config.yaml", encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 
 def _download_checkpoint(bucket: gcs.Bucket, gcs_prefix: str, local_dir: Path) -> Path | None:
@@ -281,29 +275,3 @@ def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     _logger.info("[train] done. artifacts uploaded to gs://%s/runs/%s/", model_bucket, run_id)
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--training-bucket", required=True)
-    parser.add_argument("--model-bucket", required=True)
-    parsed = parser.parse_args()
-
-    config = _load_config()
-
-    run(
-        run_id=parsed.run_id,
-        training_bucket=parsed.training_bucket,
-        model_bucket=parsed.model_bucket,
-        model_name=config["model"],
-        epochs=config["epochs"],
-        imgsz=config["imgsz"],
-        batch=config["batch"],
-        optimizer=config["optimizer"],
-        lr0=config["lr0"],
-    )
-
-
-if __name__ == "__main__":
-    main()

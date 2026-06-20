@@ -7,7 +7,6 @@ No real infrastructure is required.
 
 import io
 import sys
-from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, mock_open, patch
 
@@ -62,25 +61,7 @@ def _make_mock_model():
 
 
 # ---------------------------------------------------------------------------
-# Test 1: _load_config
-# ---------------------------------------------------------------------------
-
-class TestLoadConfig:
-    def test_returns_parsed_yaml(self):
-        with patch("builtins.open", mock_open(read_data=CONFIG_YAML)):
-            config = train_module._load_config()
-        assert config["model"] == "yolov8n.pt"
-        assert config["epochs"] == 5
-        assert config["lr0"] == 0.001
-
-    def test_reads_from_correct_path(self):
-        with patch("builtins.open", mock_open(read_data=CONFIG_YAML)) as mo:
-            train_module._load_config()
-        mo.assert_called_once_with("/app/config.yaml", encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Test 2: Config YAML on disk
+# Test 1: Config YAML on disk
 # ---------------------------------------------------------------------------
 
 class TestConfig:
@@ -368,15 +349,24 @@ class TestArtifactUpload:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: main() — env var wiring and call sequence
+# Test 9: run() — call sequence and arg wiring
 # ---------------------------------------------------------------------------
 
-class TestMain:
-    _ARGV = ["train.py", "--run-id", "run-test-001", "--training-bucket", "my-training-bucket", "--model-bucket", "my-model-bucket"]
+class TestRun:
+    _KWARGS = {
+        "run_id": "run-test-001",
+        "training_bucket": "my-training-bucket",
+        "model_bucket": "my-model-bucket",
+        "model_name": "yolov8n.pt",
+        "epochs": 5,
+        "imgsz": 640,
+        "batch": 16,
+        "optimizer": "AdamW",
+        "lr0": 0.001,
+    }
 
     def _enter_base_patches(self, stack, **overrides):
         specs = {
-            "_load_config": {"return_value": CONFIG_FIXTURE},
             "_read_dataset_generation": {"return_value": 99999},
             "_download_training_data": {},
             "_train_model": {"return_value": _make_mock_model()},
@@ -388,48 +378,41 @@ class TestMain:
         stack.enter_context(patch.object(train_module.gcs, "Client"))
         return mocks
 
-    def test_all_steps_called_in_order(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", self._ARGV)
+    def test_all_steps_called_in_order(self):
         call_order = []
 
-        with patch.object(train_module, "_load_config", side_effect=lambda: call_order.append("load_config") or CONFIG_FIXTURE), \
-             patch.object(train_module, "_read_dataset_generation", side_effect=lambda *a: call_order.append("read_dataset_generation") or 99999), \
+        with patch.object(train_module, "_read_dataset_generation", side_effect=lambda *a: call_order.append("read_dataset_generation") or 99999), \
              patch.object(train_module, "_download_training_data", side_effect=lambda *a: call_order.append("download_training_data")), \
              patch.object(train_module, "_train_model", side_effect=lambda *a, **kw: call_order.append("train_model") or _make_mock_model()), \
              patch.object(train_module, "_export_onnx", side_effect=lambda *a: call_order.append("export_onnx") or "/tmp/best.onnx"), \
              patch.object(train_module, "_upload_artifacts", side_effect=lambda *a: call_order.append("upload_artifacts")), \
              patch.object(train_module.gcs, "Client"):
-            train_module.main()
+            train_module.run(**self._KWARGS)
 
-        assert call_order == ["load_config", "read_dataset_generation", "download_training_data", "train_model", "export_onnx", "upload_artifacts"]
+        assert call_order == ["read_dataset_generation", "download_training_data", "train_model", "export_onnx", "upload_artifacts"]
 
-    def test_run_id_passed_to_upload(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", self._ARGV)
+    def test_run_id_passed_to_upload(self):
+        from contextlib import ExitStack
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
-            train_module.main()
+            train_module.run(**self._KWARGS)
 
         _, _, run_id, _, _ = mocks["_upload_artifacts"].call_args.args
         assert run_id == "run-test-001"
 
-    def test_data_yaml_path_uses_local_dir(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", self._ARGV)
+    def test_data_yaml_path_uses_local_dir(self):
+        from contextlib import ExitStack
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
-            train_module.main()
+            train_module.run(**self._KWARGS)
 
         assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/app/data/data.yaml"
 
-    def test_checkpoint_prefix_contains_run_id(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", self._ARGV)
+    def test_checkpoint_prefix_contains_run_id(self):
+        from contextlib import ExitStack
         with ExitStack() as stack:
             mocks = self._enter_base_patches(stack)
-            train_module.main()
+            train_module.run(**self._KWARGS)
 
         checkpoint_prefix = mocks["_train_model"].call_args.kwargs["checkpoint_prefix"]
         assert "run-test-001" in checkpoint_prefix
-
-    def test_missing_args_exits(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", ["train.py"])
-        with pytest.raises(SystemExit):
-            train_module.main()
