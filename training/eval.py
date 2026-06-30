@@ -9,7 +9,7 @@ from ultralytics import YOLO
 
 _logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path("/tmp/eval-data")
+_DATA_DIR = Path("/app/data")
 _MODEL_PATH = Path("/tmp/fish-id.onnx")
 
 
