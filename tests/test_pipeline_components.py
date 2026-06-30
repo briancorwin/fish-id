@@ -3,6 +3,7 @@
 All GCP client calls are mocked. No real infrastructure or credentials required.
 """
 # pylint: disable=wrong-import-position,import-outside-toplevel
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pipeline.pipeline import fish_id_training_pipeline, register_model, train_model, trigger_deploy  # noqa: E402
+from pipeline.pipeline import (  # noqa: E402
+    eval_model,
+    fish_id_training_pipeline,
+    promote_model,
+    register_model,
+    train_model,
+    trigger_deploy,
+)
 
 
 class TestPipelineCompilation:
@@ -47,6 +55,20 @@ class TestTrainModel:
 
     def test_component_uses_artifact_registry_image(self):
         image = train_model.component_spec.implementation.container.image
+        assert "fish-id-train" in image
+
+
+class TestEvalModel:
+    def test_component_has_expected_inputs(self):
+        inputs = eval_model.component_spec.inputs
+        expected = {
+            "run_id", "training_bucket", "model_bucket",
+            "project_id", "region", "vertex_experiment",
+        }
+        assert set(inputs.keys()) == expected
+
+    def test_component_uses_training_image(self):
+        image = eval_model.component_spec.implementation.container.image
         assert "fish-id-train" in image
 
 
@@ -97,6 +119,101 @@ class TestRegisterModel:
         assert kwargs["parent_model"] == existing.resource_name
         assert kwargs["version_description"] == "run-2026-06-14-130000"
         assert result == new_version.resource_name
+
+    def test_does_not_tag_production_alias(self):
+        mock_aip = MagicMock()
+        mock_aip.Model.list.return_value = []
+        mock_aip.Model.upload.return_value = MagicMock(resource_name="projects/p/models/m")
+
+        self._run(mock_aip)
+
+        kwargs = mock_aip.Model.upload.call_args.kwargs
+        assert "production" not in kwargs.get("version_aliases", [])
+
+    def test_tags_latest_alias(self):
+        mock_aip = MagicMock()
+        mock_aip.Model.list.return_value = []
+        mock_aip.Model.upload.return_value = MagicMock(resource_name="projects/p/models/m")
+
+        self._run(mock_aip)
+
+        kwargs = mock_aip.Model.upload.call_args.kwargs
+        assert "latest" in kwargs.get("version_aliases", [])
+
+
+class TestPromoteModel:
+    def _make_mocks(self):
+        mock_aip = MagicMock()
+        mock_aip_v1 = MagicMock()
+        mock_aip_v1_types = MagicMock()
+        return mock_aip, mock_aip_v1, mock_aip_v1_types
+
+    def _run(self, mock_aip, mock_aip_v1, mock_aip_v1_types, **kwargs):
+        google_cloud_mock = MagicMock(aiplatform=mock_aip, aiplatform_v1=mock_aip_v1)
+        with patch.dict(sys.modules, {
+            "google.cloud": google_cloud_mock,
+            "google.cloud.aiplatform": mock_aip,
+            "google.cloud.aiplatform_v1": mock_aip_v1,
+            "google.cloud.aiplatform_v1.types": mock_aip_v1_types,
+        }):
+            return promote_model.python_func(
+                project=kwargs.get("project", "test-project"),
+                region=kwargs.get("region", "us-central1"),
+                model_resource_name=kwargs.get(
+                    "model_resource_name",
+                    "projects/test-project/locations/us-central1/models/123/versions/2",
+                ),
+                vertex_experiment=kwargs.get("vertex_experiment", "fish-id-eval"),
+            )
+
+    def test_auto_promotes_when_no_production_model_exists(self):
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-abc")
+        mock_aip.Model.side_effect = [latest_model, Exception("no production alias")]
+
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+
+        assert result is True
+
+    def test_promotes_when_current_better_than_production(self):
+        import pandas as pd
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-new")
+        prod_model = MagicMock(version_description="run-prod")
+        mock_aip.Model.side_effect = [latest_model, prod_model]
+        mock_aip.get_experiment_df.return_value = pd.DataFrame([
+            {"run_name": "run-new", "metric.mAP50": 0.85},
+            {"run_name": "run-prod", "metric.mAP50": 0.80},
+        ])
+
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+
+        assert result is True
+
+    def test_skips_when_current_worse_than_production(self):
+        import pandas as pd
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-new")
+        prod_model = MagicMock(version_description="run-prod")
+        mock_aip.Model.side_effect = [latest_model, prod_model]
+        mock_aip.get_experiment_df.return_value = pd.DataFrame([
+            {"run_name": "run-new", "metric.mAP50": 0.60},
+            {"run_name": "run-prod", "metric.mAP50": 0.80},
+        ])
+
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+
+        assert result is False
+
+    def test_calls_merge_version_aliases_on_promote(self):
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-abc")
+        mock_aip.Model.side_effect = [latest_model, Exception("no production alias")]
+
+        self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+
+        mock_service_client = mock_aip_v1.ModelServiceClient.return_value
+        mock_service_client.merge_version_aliases.assert_called_once()
 
 
 class TestTriggerDeploy:

@@ -87,30 +87,30 @@ class TestConfig:
 class TestDownloadCheckpoint:
     _PREFIX = "runs/run-001/checkpoint"
 
-    def test_returns_none_when_no_checkpoint_in_gcs(self, tmp_path):
+    def test_returns_none_when_no_checkpoint_in_gcs(self):
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value.exists.return_value = False
-        result = train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        result = train_module._download_checkpoint(mock_bucket, self._PREFIX)
         assert result is None
 
-    def test_checks_correct_gcs_path(self, tmp_path):
+    def test_checks_correct_gcs_path(self):
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value.exists.return_value = False
-        train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        train_module._download_checkpoint(mock_bucket, self._PREFIX)
         mock_bucket.blob.assert_called_with(f"{self._PREFIX}/weights/last.pt")
 
-    def test_returns_local_path_when_checkpoint_exists(self, tmp_path):
+    def test_returns_local_path_when_checkpoint_exists(self):
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value.exists.return_value = True
-        result = train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
-        assert result == tmp_path / "last.pt"
+        result = train_module._download_checkpoint(mock_bucket, self._PREFIX)
+        assert result == train_module._CHECKPOINT_DIR / "last.pt"
 
-    def test_downloads_to_correct_local_path(self, tmp_path):
+    def test_downloads_to_correct_local_path(self):
         mock_bucket = MagicMock()
         mock_bucket.blob.return_value.exists.return_value = True
-        train_module._download_checkpoint(mock_bucket, self._PREFIX, tmp_path)
+        train_module._download_checkpoint(mock_bucket, self._PREFIX)
         mock_bucket.blob.return_value.download_to_filename.assert_called_once_with(
-            str(tmp_path / "last.pt")
+            str(train_module._CHECKPOINT_DIR / "last.pt")
         )
 
 
@@ -322,19 +322,20 @@ class TestArtifactUpload:
         blob_paths = [c.args[0] for c in mock_bucket.blob.call_args_list]
         assert "runs/run-001/fish-id.onnx" in blob_paths
 
-    def test_onnx_copied_to_production_path(self, tmp_path):
+    def test_production_onnx_not_written_directly(self, tmp_path):
+        # promote_model in the pipeline handles the production ONNX copy after the quality gate.
         mock_bucket = self._run_upload(tmp_path)
         blob_paths = [c.args[0] for c in mock_bucket.blob.call_args_list]
-        assert "fish-id.onnx" in blob_paths
+        assert "fish-id.onnx" not in blob_paths
 
     def test_metadata_uploaded_to_run_path(self, tmp_path):
         mock_bucket = self._run_upload(tmp_path)
         blob_paths = [c.args[0] for c in mock_bucket.blob.call_args_list]
         assert "runs/run-001/metadata.json" in blob_paths
 
-    def test_upload_from_filename_called_three_times(self, tmp_path):
+    def test_upload_from_filename_called_twice(self, tmp_path):
         mock_bucket = self._run_upload(tmp_path)
-        assert mock_bucket.blob.return_value.upload_from_filename.call_count == 3
+        assert mock_bucket.blob.return_value.upload_from_filename.call_count == 2
 
     def test_metadata_content_has_correct_fields(self):
         metadata = self._make_metadata("run-abc")
@@ -406,7 +407,7 @@ class TestRun:
             mocks = self._enter_base_patches(stack)
             train_module.run(**self._KWARGS)
 
-        assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == "/app/data/data.yaml"
+        assert mocks["_train_model"].call_args.kwargs["data_yaml_path"] == str(train_module._DATA_DIR / "data.yaml")
 
     def test_checkpoint_prefix_contains_run_id(self):
         from contextlib import ExitStack

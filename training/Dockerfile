@@ -16,6 +16,7 @@ RUN echo "${IMAGE_TAG}" > /app/image_tag.txt
 
 COPY training/config.yaml /app/config.yaml
 COPY training/train.py /app/train.py
+COPY training/eval.py /app/eval.py
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app

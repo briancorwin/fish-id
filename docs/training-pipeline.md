@@ -147,8 +147,13 @@ lr0: 0.001
 
 **`register_model` component:**
 - Registers `gs://{MODEL_BUCKET}/runs/{run_id}/` as the artifact URI in Vertex AI Model Registry
-- Display name: `"fish-id"`; version aliases: `"latest"`, `"production"`; `is_default_version=True`
+- Display name: `"fish-id"`; version aliases: `"latest"`; `is_default_version=True`; `version_description=run_id`
 - If a `"fish-id"` model already exists, adds a new version (passes `parent_model`); otherwise creates the model
+
+**`promote_model` component:**
+- Reads `run_id` from the `@latest` alias and `prod_run_id` from the `@production` alias
+- Gates promotion: queries Vertex AI Experiments for both run IDs; if current `mAP50 < prod mAP50 - 0.02`, skips promotion
+- On gate pass (or no production model yet): tags the registered version as `"production"` via `MergeVersionAliasesRequest`
 
 **`trigger_deploy` component:**
 - Reads the GitHub PAT from Secret Manager secret `fish-id-github-deploy-token`
@@ -213,7 +218,5 @@ echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --d
 
 ## Deferred
 
-- **Quality gates (Gate 1 + Gate 2)** — no eval or gating; every successful run is promoted to `production`
-- **Eval dataset + eval job** — removed for now
 - **Eventarc / Cloud Functions trigger** — pipeline is triggered manually only
 - **Multi-config support** — single `config.yaml` baked into the container

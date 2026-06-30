@@ -12,6 +12,11 @@ from ultralytics import YOLO
 
 _logger = logging.getLogger(__name__)
 
+_DATA_DIR = Path("/tmp/train-data")
+_CHECKPOINT_DIR = Path("/tmp/yolo-checkpoint")
+_YOLO_RUNS_DIR = Path("/tmp/yolo-runs")
+_METADATA_PATH = Path("/tmp/metadata.json")
+
 
 class GCSCheckpointCallback:
     def __init__(self, bucket: gcs.Bucket, gcs_prefix: str) -> None:
@@ -29,19 +34,19 @@ class GCSCheckpointCallback:
 
 
 
-def _download_checkpoint(bucket: gcs.Bucket, gcs_prefix: str, local_dir: Path) -> Path | None:
+def _download_checkpoint(bucket: gcs.Bucket, gcs_prefix: str) -> Path | None:
     blob = bucket.blob(f"{gcs_prefix}/weights/last.pt")
     if not blob.exists():
         return None
-    local_path = local_dir / "last.pt"
-    local_dir.mkdir(parents=True, exist_ok=True)
+    local_path = _CHECKPOINT_DIR / "last.pt"
+    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     blob.download_to_filename(str(local_path))
     _logger.info("[train] checkpoint downloaded from gs://%s/%s", bucket.name, blob.name)
     return local_path
 
 
 def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_bucket: gcs.Bucket, checkpoint_prefix: str) -> YOLO:
-    checkpoint_path = _download_checkpoint(checkpoint_bucket, checkpoint_prefix, Path("/tmp/yolo-checkpoint"))
+    checkpoint_path = _download_checkpoint(checkpoint_bucket, checkpoint_prefix)
     callback = GCSCheckpointCallback(checkpoint_bucket, checkpoint_prefix)
 
     if checkpoint_path is not None:
@@ -68,7 +73,7 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_buc
             cache=False,
             # Keep output in /tmp so YOLO has a writable directory; all other
             # artifacts are discarded when the container exits.
-            project="/tmp/yolo-runs",
+            project=str(_YOLO_RUNS_DIR),
             # Prevent YOLO from auto-incrementing to train/, train2/, etc.
             name=".",
             save=True,
@@ -184,19 +189,12 @@ def _upload_artifacts(storage_client: gcs.Client, model_bucket: str, run_id: str
     bucket.blob(run_onnx_dest).upload_from_filename(onnx_path)
     _logger.info("[train] uploaded run-scoped ONNX")
 
-    prod_onnx_dest = "fish-id.onnx"
-    _logger.info("[train] uploading %s -> gs://%s/%s (production path)", onnx_path, model_bucket, prod_onnx_dest)
-    # Overwrite the production serving path directly until quality gates are in place
-    bucket.blob(prod_onnx_dest).upload_from_filename(onnx_path)
-    _logger.info("[train] uploaded production ONNX")
-
-    metadata_local = "/tmp/metadata.json"
-    with open(metadata_local, "w", encoding="utf-8") as f:
+    with open(_METADATA_PATH, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
 
     metadata_dest = f"runs/{run_id}/metadata.json"
     _logger.info("[train] uploading metadata -> gs://%s/%s", model_bucket, metadata_dest)
-    bucket.blob(metadata_dest).upload_from_filename(metadata_local)
+    bucket.blob(metadata_dest).upload_from_filename(str(_METADATA_PATH))
     _logger.info("[train] uploaded metadata")
 
 
@@ -241,11 +239,10 @@ def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     dataset_generation = _read_dataset_generation(storage_client, training_bucket)
     _logger.info("[train] dataset_generation=%d", dataset_generation)
 
-    local_data_dir = Path("/app/data")
-    _logger.info("[train] downloading training data to %s", local_data_dir)
-    _download_training_data(storage_client, training_bucket, local_data_dir)
+    _logger.info("[train] downloading training data to %s", _DATA_DIR)
+    _download_training_data(storage_client, training_bucket, _DATA_DIR)
 
-    data_yaml_path = str(local_data_dir / "data.yaml")
+    data_yaml_path = str(_DATA_DIR / "data.yaml")
     _logger.info("[train] data_yaml_path=%s", data_yaml_path)
 
     checkpoint_prefix = f"runs/{run_id}/checkpoint"
