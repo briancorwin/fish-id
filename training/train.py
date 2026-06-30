@@ -12,7 +12,7 @@ from ultralytics import YOLO
 
 _logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path("/tmp/train-data")
+_DATA_DIR = Path("/app/data")
 _CHECKPOINT_DIR = Path("/tmp/yolo-checkpoint")
 _YOLO_RUNS_DIR = Path("/tmp/yolo-runs")
 _METADATA_PATH = Path("/tmp/metadata.json")
