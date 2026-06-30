@@ -167,9 +167,7 @@ def promote_model(
 
         try:
             aiplatform.init(project=project, location=region, experiment=vertex_experiment)
-            exp_df = aiplatform.get_experiment_df(  # pylint: disable=unexpected-keyword-arg
-                experiment=vertex_experiment, project=project, location=region
-            )
+            exp_df = aiplatform.get_experiment_df(experiment=vertex_experiment)
             current_rows = exp_df[exp_df["run_name"] == latest_run_id]
             if not current_rows.empty:
                 current_map50 = float(current_rows.iloc[0]["metric.mAP50"])
