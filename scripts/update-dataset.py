@@ -75,24 +75,33 @@ def main() -> None:
             sys.exit(1)
         export_dir = candidates[0].parent.parent
 
-        dirs = {
+        required_dirs = {
             "train images": export_dir / "train" / "images",
             "train labels": export_dir / "train" / "labels",
             "val images":   export_dir / "valid" / "images",
             "val labels":   export_dir / "valid" / "labels",
         }
-        for name, path in dirs.items():
+        for name, path in required_dirs.items():
             if not path.exists():
                 print(f"ERROR: Expected {name} directory not found: {path}", file=sys.stderr)
                 sys.exit(1)
 
+        eval_images_dir = export_dir / "test" / "images"
+        eval_labels_dir = export_dir / "test" / "labels"
+        has_eval_split = eval_images_dir.exists()
+        if not has_eval_split:
+            print("  Note: no test split found in Roboflow export — eval set will not be updated")
+
         # Step 2: Sync to GCS flat pool
         print("Step 2: Syncing to GCS...")
         gcs_base = f"gs://{args.bucket}"
-        _rsync_to_gcs(dirs["train images"], f"{gcs_base}/images/train/")
-        _rsync_to_gcs(dirs["train labels"], f"{gcs_base}/labels/train/")
-        _rsync_to_gcs(dirs["val images"],   f"{gcs_base}/images/val/")
-        _rsync_to_gcs(dirs["val labels"],   f"{gcs_base}/labels/val/")
+        _rsync_to_gcs(required_dirs["train images"], f"{gcs_base}/images/train/")
+        _rsync_to_gcs(required_dirs["train labels"], f"{gcs_base}/labels/train/")
+        _rsync_to_gcs(required_dirs["val images"],   f"{gcs_base}/images/val/")
+        _rsync_to_gcs(required_dirs["val labels"],   f"{gcs_base}/labels/val/")
+        if has_eval_split:
+            _rsync_to_gcs(eval_images_dir, f"{gcs_base}/images/eval/")
+            _rsync_to_gcs(eval_labels_dir, f"{gcs_base}/labels/eval/")
 
         # Step 3: Upload data.yaml and capture the GCS generation as the dataset version
         print("Step 3: Uploading data.yaml...")
