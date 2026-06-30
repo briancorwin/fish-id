@@ -197,7 +197,7 @@ class TestLogToVertex:
         assert "mAP50" in logged
         assert "mAP50_95" in logged
 
-    def test_uses_resume_true(self):
+    def test_creates_run_rather_than_resuming(self):
         mock_aip = MagicMock()
         mock_aip.start_run.return_value.__enter__ = MagicMock(return_value=None)
         mock_aip.start_run.return_value.__exit__ = MagicMock(return_value=False)
@@ -205,5 +205,6 @@ class TestLogToVertex:
         with patch.object(eval_module, "aiplatform", mock_aip):
             eval_module._log_to_vertex("p", "r", "exp", "run-1", SAMPLE_METRICS)
 
-        _, kwargs = mock_aip.start_run.call_args
-        assert kwargs.get("resume") is True
+        args, kwargs = mock_aip.start_run.call_args
+        assert args[0] == "run-1"
+        assert kwargs.get("resume") is not True
