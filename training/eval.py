@@ -84,7 +84,7 @@ def _log_to_vertex(
     project_id: str, region: str, experiment: str, run_id: str, metrics: dict
 ) -> None:
     aiplatform.init(project=project_id, location=region, experiment=experiment)
-    with aiplatform.start_run(run_id, resume=True):
+    with aiplatform.start_run(run_id):
         aiplatform.log_metrics({
             "mAP50": metrics["mAP50"],
             "mAP50_95": metrics["mAP50_95"],
