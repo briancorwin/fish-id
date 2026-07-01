@@ -35,6 +35,7 @@ def train_model(
     batch: int,
     optimizer: str,
     lr0: float,
+    patience: int,
 ) -> None:
     import train  # installed via PYTHONPATH=/app in the training image
     train.run(
@@ -47,6 +48,7 @@ def train_model(
         batch=batch,
         optimizer=optimizer,
         lr0=lr0,
+        patience=patience,
     )
 
 
@@ -257,6 +259,7 @@ def fish_id_training_pipeline(
     batch: int = _CONFIG["batch"],
     optimizer: str = _CONFIG["optimizer"],
     lr0: float = _CONFIG["lr0"],
+    patience: int = _CONFIG["patience"],
     cpu_only: bool = False,
 ) -> None:
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
@@ -271,6 +274,7 @@ def fish_id_training_pipeline(
                 batch=batch,
                 optimizer=optimizer,
                 lr0=lr0,
+                patience=patience,
             )
             .set_cpu_request("16").set_cpu_limit("16")
             .set_memory_request("64G").set_memory_limit("64G")
@@ -310,6 +314,7 @@ def fish_id_training_pipeline(
                 batch=batch,
                 optimizer=optimizer,
                 lr0=lr0,
+                patience=patience,
             )
             .set_retry(num_retries=3)
         )

@@ -136,12 +136,15 @@ Both branches are resumable: if `gs://{MODEL_BUCKET}/runs/{run_id}/checkpoint/we
 
 ```yaml
 model: yolov8n.pt
-epochs: 5
+epochs: 100
 imgsz: 640
 batch: 16
 optimizer: AdamW
 lr0: 0.001
+patience: 20
 ```
+
+`patience` stops training early if `mAP50` hasn't improved for that many epochs, so 100 epochs is a ceiling, not a guaranteed runtime.
 
 **Pipeline parameters:**
 
@@ -156,7 +159,7 @@ lr0: 0.001
 | `github_repo` | `briancorwin/fish-id` | Env var `GITHUB_REPO` |
 | `vertex_experiment` | `fish-id-eval` | Env var `VERTEX_EXPERIMENT` — used by `eval_model` and `promote_model` |
 | `cpu_only` | `false` | `--cpu-only` flag (default: false) |
-| `model_name`, `epochs`, `imgsz`, `batch`, `optimizer`, `lr0` | see above | Default from `training/config.yaml` at compile time |
+| `model_name`, `epochs`, `imgsz`, `batch`, `optimizer`, `lr0`, `patience` | see above | Default from `training/config.yaml` at compile time |
 
 **Training script behavior (`train.py`):**
 1. Read the dataset generation from `{TRAINING_BUCKET}/data.yaml` (its GCS object generation becomes `dataset_generation` in the run's metadata)
