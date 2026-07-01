@@ -241,13 +241,14 @@ export GCP_REGION=us-central1
 export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
 export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
+export VERTEX_EXPERIMENT=fish-id-eval
 
 python scripts/trigger-training.py
 ```
 
 Use `--image <uri>` to override the training container image. Use `--cpu-only` to skip the GPU accelerator.
 
-The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. On success, the pipeline registers the model in Vertex AI Model Registry with a `production` alias and automatically triggers `deploy.yml` to redeploy Cloud Run with the new model.
+The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. After training, the pipeline evaluates the model against a held-out eval set; if it clears the quality gate against the current production model, it's registered in Vertex AI Model Registry with a `production` alias and `deploy.yml` is triggered automatically to redeploy Cloud Run with the new model. See [docs/training-pipeline.md](docs/training-pipeline.md) for the full flow.
 
 ---
 
