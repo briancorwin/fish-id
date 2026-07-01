@@ -33,6 +33,7 @@ fish-id/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── train.py                # entrypoint — downloads dataset from GCS, trains, exports ONNX
+│   ├── eval.py                 # entrypoint — evaluates a trained model against the eval split, logs to Vertex AI Experiments
 │   └── config.yaml             # training config (architecture + hyperparameters)
 ├── pipeline/                   # Vertex AI Pipeline (KFP v2)
 │   ├── pipeline.py             # KFP pipeline definition; compile with: python pipeline/pipeline.py

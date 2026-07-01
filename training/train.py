@@ -56,9 +56,9 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_buc
         model.train(resume=True)
     else:
         _logger.info(
-            "[train] no checkpoint found — starting fresh: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s workers=%d",
+            "[train] no checkpoint found — starting fresh: model=%s epochs=%s imgsz=%s batch=%s optimizer=%s lr0=%s patience=%s workers=%d",
             config["model"], config["epochs"], config["imgsz"], config["batch"],
-            config["optimizer"], config["lr0"], workers,
+            config["optimizer"], config["lr0"], config["patience"], workers,
         )
         model = YOLO(config["model"])
         model.add_callback("on_train_epoch_end", callback.on_train_epoch_end)
@@ -69,6 +69,7 @@ def _train_model(config: dict, workers: int, data_yaml_path: str, checkpoint_buc
             batch=config["batch"],
             optimizer=config["optimizer"],
             lr0=config["lr0"],
+            patience=config["patience"],
             workers=workers,
             cache=False,
             # Keep output in /tmp so YOLO has a writable directory; all other
@@ -170,6 +171,7 @@ def _build_metadata(  # pylint: disable=too-many-arguments,too-many-positional-a
             "batch": config["batch"],
             "optimizer": config["optimizer"],
             "lr0": config["lr0"],
+            "patience": config["patience"],
         },
         "final_train_loss": float(trainer.metrics.get("train/box_loss", 0.0))
         if hasattr(trainer, "metrics")
@@ -208,6 +210,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     batch: int,
     optimizer: str,
     lr0: float,
+    patience: int,
 ) -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -218,6 +221,7 @@ def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         "batch": batch,
         "optimizer": optimizer,
         "lr0": lr0,
+        "patience": patience,
     }
 
     cpu_count = os.cpu_count() or 1

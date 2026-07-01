@@ -46,9 +46,12 @@ CONFIG_FIXTURE = {
     "batch": 16,
     "optimizer": "AdamW",
     "lr0": 0.001,
+    "patience": 20,
 }
 
-CONFIG_YAML = "model: yolov8n.pt\nepochs: 5\nimgsz: 640\nbatch: 16\noptimizer: AdamW\nlr0: 0.001\n"
+CONFIG_YAML = (
+    "model: yolov8n.pt\nepochs: 5\nimgsz: 640\nbatch: 16\noptimizer: AdamW\nlr0: 0.001\npatience: 20\n"
+)
 
 
 def _make_mock_model():
@@ -72,7 +75,7 @@ class TestConfig:
     def test_all_required_keys_present(self):
         with open(self.CONFIG_PATH, encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
-        assert {"model", "epochs", "imgsz", "batch", "optimizer", "lr0"} <= set(cfg.keys())
+        assert {"model", "epochs", "imgsz", "batch", "optimizer", "lr0", "patience"} <= set(cfg.keys())
 
     def test_model_is_yolov8n(self):
         with open(self.CONFIG_PATH, encoding="utf-8") as f:
@@ -179,6 +182,7 @@ class TestTrainModel:
             batch=16,
             optimizer="AdamW",
             lr0=0.001,
+            patience=20,
             workers=4,
             cache=False,
             project="/tmp/yolo-runs",
@@ -346,6 +350,7 @@ class TestArtifactUpload:
         assert "trained_at" in metadata
         assert metadata["duration_seconds"] == 120.0
         assert metadata["training_args"]["optimizer"] == "AdamW"
+        assert metadata["training_args"]["patience"] == 20
         assert metadata["dataset_generation"] == 12345
 
 
@@ -364,6 +369,7 @@ class TestRun:
         "batch": 16,
         "optimizer": "AdamW",
         "lr0": 0.001,
+        "patience": 20,
     }
 
     def _enter_base_patches(self, stack, **overrides):
