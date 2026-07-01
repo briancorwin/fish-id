@@ -122,7 +122,7 @@ def register_model(
 
 @dsl.component(
     base_image="python:3.11-slim",
-    packages_to_install=["google-cloud-aiplatform>=1.60.0"],
+    packages_to_install=["google-cloud-aiplatform[metadata]>=1.60.0"],
 )
 def promote_model(
     project: str,
@@ -179,7 +179,14 @@ def promote_model(
         except Exception as exc:
             logger.warning("[promote] Vertex AI Experiments lookup failed: %s", exc)
 
-        if current_map50 is not None and prod_map50 is not None and current_map50 < prod_map50 - 0.02:
+        if current_map50 is None or prod_map50 is None:
+            logger.warning(
+                "[promote] gate FAILED: could not retrieve mAP50 for current or "
+                "production run — skipping"
+            )
+            return False
+
+        if current_map50 < prod_map50 - 0.02:
             logger.info(
                 "[promote] gate FAILED: current mAP50=%.3f < prod mAP50=%.3f - 0.02 — skipping",
                 current_map50, prod_map50,
@@ -187,7 +194,7 @@ def promote_model(
             return False
 
         logger.info(
-            "[promote] gate PASSED: current mAP50=%s vs prod mAP50=%s",
+            "[promote] gate PASSED: current mAP50=%.3f vs prod mAP50=%.3f",
             current_map50, prod_map50,
         )
     else:
