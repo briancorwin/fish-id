@@ -47,12 +47,23 @@ The compiled pipeline template must be current before triggering a run. Merging 
 ```bash
 export ROBOFLOW_API_KEY=your_key_here
 
+# Plus everything scripts/trigger-training.py needs (see below) — a successful sync
+# automatically submits a training run against the newly-synced data.
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-central1
+export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
+export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
+export GITHUB_REPO=owner/repo-name
+export VERTEX_EXPERIMENT=fish-id-eval
+
 python scripts/update-dataset.py \
     --roboflow-version 5 \
     --bucket ${GCP_PROJECT_ID}-fish-id-training \
     --workspace my-workspace \
     --project fish-id
 ```
+
+Pass `--no-trigger-training` to sync without submitting a training run (default is to trigger). Useful when staging several dataset versions before training on the final one.
 
 Uses `gsutil -m rsync` without `-d` — files are never deleted from the pool. Re-running with the same version is safe and idempotent.
 

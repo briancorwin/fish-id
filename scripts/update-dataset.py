@@ -7,6 +7,9 @@ Images and labels are written to a flat pool — no versioning or manifests.
 Re-running adds new files and overwrites changed ones; it does not delete files
 that were removed from a newer Roboflow version (omit -d flag intentionally).
 
+On success, automatically submits a Vertex AI training run for the new data via
+scripts/trigger-training.py (requires that script's environment variables to also be set).
+
 Usage:
     python scripts/update-dataset.py \
         --roboflow-version 5 \
@@ -14,8 +17,13 @@ Usage:
         --workspace my-workspace \
         --project fish-id
 
+Pass --no-trigger-training to sync the dataset without submitting a training run.
+
 Environment variables:
     ROBOFLOW_API_KEY   Roboflow API key (required)
+
+    Plus everything required by scripts/trigger-training.py (GCP_PROJECT_ID, GCP_REGION,
+    TRAINING_BUCKET, MODEL_BUCKET, GITHUB_REPO, VERTEX_EXPERIMENT) to submit the training run.
 """
 
 import argparse
@@ -43,6 +51,13 @@ def main() -> None:
     parser.add_argument("--bucket", required=True, help="GCS training bucket name")
     parser.add_argument("--workspace", required=True, help="Roboflow workspace slug")
     parser.add_argument("--project", required=True, help="Roboflow project slug")
+    parser.add_argument(
+        "--trigger-training",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Submit a Vertex AI training run via trigger-training.py after a successful sync "
+             "(default: true). Pass --no-trigger-training to sync only.",
+    )
     args = parser.parse_args()
 
     api_key = os.environ["ROBOFLOW_API_KEY"]
@@ -128,6 +143,13 @@ def main() -> None:
     print(f"\nDone. Dataset synced to gs://{args.bucket}/")
     print(f"  Classes ({len(class_names)}): {', '.join(class_names)}")
     print(f"  Dataset generation: {dataset_generation}")
+
+    if args.trigger_training:
+        print("\nStep 4: Triggering training run...")
+        trigger_script = Path(__file__).parent / "trigger-training.py"
+        subprocess.run([sys.executable, str(trigger_script)], check=True)
+    else:
+        print("\nSkipping training trigger (--no-trigger-training).")
 
 
 if __name__ == "__main__":
