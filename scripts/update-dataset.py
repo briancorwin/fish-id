@@ -11,19 +11,19 @@ On success, automatically submits a Vertex AI training run for the new data via
 scripts/trigger-training.py (requires that script's environment variables to also be set).
 
 Usage:
-    python scripts/update-dataset.py \
-        --roboflow-version 5 \
-        --bucket ${GCP_PROJECT_ID}-fish-id-training \
-        --workspace my-workspace \
-        --project fish-id
+    python scripts/update-dataset.py --roboflow-version 5
 
 Pass --no-trigger-training to sync the dataset without submitting a training run.
 
 Environment variables:
-    ROBOFLOW_API_KEY   Roboflow API key (required)
+    GCP_PROJECT_ID       GCP project ID (required) — the training bucket is always
+                         {GCP_PROJECT_ID}-fish-id-training
+    ROBOFLOW_API_KEY     Roboflow API key (required)
+    ROBOFLOW_WORKSPACE   Roboflow workspace slug (required)
+    ROBOFLOW_PROJECT     Roboflow project slug (required)
 
-    Plus everything required by scripts/trigger-training.py (GCP_PROJECT_ID, GCP_REGION,
-    TRAINING_BUCKET, MODEL_BUCKET, GITHUB_REPO, VERTEX_EXPERIMENT) to submit the training run.
+    Plus everything else required by scripts/trigger-training.py (GCP_REGION, GITHUB_REPO)
+    to submit the training run.
 """
 
 import argparse
@@ -48,9 +48,6 @@ def main() -> None:
         description="Sync a Roboflow dataset version to the GCS training bucket."
     )
     parser.add_argument("--roboflow-version", required=True, type=int)
-    parser.add_argument("--bucket", required=True, help="GCS training bucket name")
-    parser.add_argument("--workspace", required=True, help="Roboflow workspace slug")
-    parser.add_argument("--project", required=True, help="Roboflow project slug")
     parser.add_argument(
         "--trigger-training",
         action=argparse.BooleanOptionalAction,
@@ -60,7 +57,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Bucket name always follows the project's standard naming convention — not configurable.
+    bucket = f"{os.environ['GCP_PROJECT_ID']}-fish-id-training"
     api_key = os.environ["ROBOFLOW_API_KEY"]
+    workspace = os.environ["ROBOFLOW_WORKSPACE"]
+    roboflow_project = os.environ["ROBOFLOW_PROJECT"]
 
     try:
         from roboflow import Roboflow  # pylint: disable=import-outside-toplevel
@@ -73,13 +74,13 @@ def main() -> None:
 
         # Step 1: Export from Roboflow in YOLO format
         print(
-            f"Step 1: Downloading Roboflow {args.workspace}/{args.project} "
+            f"Step 1: Downloading Roboflow {workspace}/{roboflow_project} "
             f"version {args.roboflow_version}..."
         )
         rf = Roboflow(api_key=api_key)
         (
-            rf.workspace(args.workspace)
-            .project(args.project)
+            rf.workspace(workspace)
+            .project(roboflow_project)
             .version(args.roboflow_version)
             .download("yolov8", location=str(tmp_path), overwrite=True)
         )
@@ -109,7 +110,7 @@ def main() -> None:
 
         # Step 2: Sync to GCS flat pool
         print("Step 2: Syncing to GCS...")
-        gcs_base = f"gs://{args.bucket}"
+        gcs_base = f"gs://{bucket}"
         _rsync_to_gcs(required_dirs["train images"], f"{gcs_base}/images/train/")
         _rsync_to_gcs(required_dirs["train labels"], f"{gcs_base}/labels/train/")
         _rsync_to_gcs(required_dirs["val images"],   f"{gcs_base}/images/val/")
@@ -135,12 +136,12 @@ def main() -> None:
             yaml.dump(training_yaml, f)
 
         storage_client = gcs.Client()
-        blob = storage_client.bucket(args.bucket).blob("data.yaml")
+        blob = storage_client.bucket(bucket).blob("data.yaml")
         blob.upload_from_filename(str(training_yaml_file))
         blob.reload()
         dataset_generation = blob.generation
 
-    print(f"\nDone. Dataset synced to gs://{args.bucket}/")
+    print(f"\nDone. Dataset synced to gs://{bucket}/")
     print(f"  Classes ({len(class_names)}): {', '.join(class_names)}")
     print(f"  Dataset generation: {dataset_generation}")
 

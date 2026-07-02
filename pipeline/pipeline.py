@@ -13,15 +13,16 @@ _CONFIG = yaml.safe_load(
     (Path(__file__).parent.parent / "training" / "config.yaml").read_text(encoding="utf-8")
 )
 
-# Resolved at pipeline compile time from CI env vars (GCP_REGION, GCP_PROJECT_ID).
-# Override by setting TRAINING_IMAGE explicitly.
+# Resolved at pipeline compile time from CI env vars.
 _TRAINING_IMAGE = (
-    os.environ.get("TRAINING_IMAGE")
-    or f"{os.environ.get('GCP_REGION', 'us-central1')}-docker.pkg.dev"
-       f"/{os.environ.get('GCP_PROJECT_ID', 'unknown')}/fish-id/fish-id-train:latest"
+    f"{os.environ.get('GCP_REGION', 'us-central1')}-docker.pkg.dev"
+    f"/{os.environ.get('GCP_PROJECT_ID', 'unknown')}/fish-id/fish-id-train:latest"
 )
 
 _logger = logging.getLogger(__name__)
+
+# Fixed rather than a pipeline parameter — there is only ever one eval experiment.
+_VERTEX_EXPERIMENT = "fish-id-eval"
 
 
 @dsl.component(base_image=_TRAINING_IMAGE)
@@ -313,13 +314,10 @@ def trigger_deploy(
 
 @dsl.pipeline(name="fish-id-training-pipeline")
 def fish_id_training_pipeline(
-    training_bucket: str,
-    model_bucket: str,
     run_id: str,
     project: str,
     region: str,
     github_repo: str,
-    vertex_experiment: str,
     model_name: str = _CONFIG["model"],
     epochs: int = _CONFIG["epochs"],
     imgsz: int = _CONFIG["imgsz"],
@@ -329,6 +327,10 @@ def fish_id_training_pipeline(
     patience: int = _CONFIG["patience"],
     cpu_only: bool = False,
 ) -> None:
+    # Bucket names always follow the project's standard naming convention — not configurable.
+    training_bucket = f"{project}-fish-id-training"
+    model_bucket = f"{project}-fish-id-models"
+
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
         cpu_train = (
             train_model(  # pylint: disable=no-member
@@ -356,14 +358,14 @@ def fish_id_training_pipeline(
             model_bucket=model_bucket,
             project_id=project,
             region=region,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             model_resource_name=reg_cpu.output,
         ).set_retry(num_retries=3).after(reg_cpu)
         promote_cpu = promote_model(
             project=project,
             region=region,
             model_resource_name=reg_cpu.output,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             current_dataset_generation=cpu_eval.output,
         ).after(cpu_eval)
         with dsl.If(promote_cpu.output == True, name="cpu-gate-passed"):  # pylint: disable=singleton-comparison
@@ -396,14 +398,14 @@ def fish_id_training_pipeline(
             model_bucket=model_bucket,
             project_id=project,
             region=region,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             model_resource_name=reg_gpu.output,
         ).set_retry(num_retries=3).after(reg_gpu)
         promote_gpu = promote_model(
             project=project,
             region=region,
             model_resource_name=reg_gpu.output,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             current_dataset_generation=gpu_eval.output,
         ).after(gpu_eval)
         with dsl.If(promote_gpu.output == True, name="gpu-gate-passed"):  # pylint: disable=singleton-comparison
