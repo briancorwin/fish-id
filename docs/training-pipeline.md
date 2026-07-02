@@ -217,7 +217,8 @@ There is no separate training service account — `train_model`, `eval_model`, `
 
 **`fish-id-cicd-sa`** (GitHub Actions):
 - `roles/storage.objectAdmin` on `{PROJECT_ID}-fish-id-models` bucket (write compiled pipeline JSON)
-- `roles/aiplatform.viewer` on project (list Model Registry versions to resolve `production` alias at deploy time)
+- `roles/aiplatform.user` on project (submit PipelineJobs from `train-pipeline.yml`; also covers listing Model Registry versions to resolve the `production` alias at deploy time)
+- `roles/iam.serviceAccountUser` on `fish-id-workflows-sa` (attach it as the pipeline's runtime SA when submitting a run)
 
 ---
 
@@ -229,6 +230,8 @@ There is no separate training service account — `train_model`, `eval_model`, `
 | `{PROJECT_ID}-fish-id-training` bucket | `google_storage_bucket` |
 | `fish-id-workflows-sa` | `google_service_account` |
 | IAM bindings for `fish-id-workflows-sa` (see above) | `google_storage_bucket_iam_member`, `google_project_iam_member` |
+| `fish-id-cicd-sa` `roles/aiplatform.user` binding | `google_project_iam_member` |
+| `fish-id-cicd-sa` → `fish-id-workflows-sa` `roles/iam.serviceAccountUser` binding | `google_service_account_iam_member` |
 | `fish-id-github-deploy-token` | `google_secret_manager_secret` (shell only — populate manually after apply) |
 | `workflows_deploy_token` IAM binding | `google_secret_manager_secret_iam_member` |
 
