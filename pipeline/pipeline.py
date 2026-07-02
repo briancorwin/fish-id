@@ -1,4 +1,4 @@
-"""Vertex AI Pipeline: train → eval → register → promote (gates 'production' alias)."""
+"""Vertex AI Pipeline: train → register → eval → promote (gates 'production' alias)."""
 # pylint: disable=import-outside-toplevel
 import logging
 import os
@@ -52,26 +52,6 @@ def train_model(
     )
 
 
-@dsl.component(base_image=_TRAINING_IMAGE)
-def eval_model(
-    run_id: str,
-    training_bucket: str,
-    model_bucket: str,
-    project_id: str,
-    region: str,
-    vertex_experiment: str,
-) -> None:
-    import eval  # installed via PYTHONPATH=/app in the training image  # noqa: A001  # pylint: disable=redefined-builtin
-    eval.run(
-        run_id=run_id,
-        training_bucket=training_bucket,
-        model_bucket=model_bucket,
-        project_id=project_id,
-        region=region,
-        vertex_experiment=vertex_experiment,
-    )
-
-
 _TrainGpuJobOp = create_custom_training_job_from_component(
     train_model,
     display_name="fish-id-gpu-training",
@@ -81,6 +61,77 @@ _TrainGpuJobOp = create_custom_training_job_from_component(
     strategy="SPOT",
     restart_job_on_worker_restart=True,
 )
+
+
+@dsl.component(base_image=_TRAINING_IMAGE)
+def eval_latest_and_production_models(
+    run_id: str,
+    training_bucket: str,
+    model_bucket: str,
+    project_id: str,
+    region: str,
+    vertex_experiment: str,
+    model_resource_name: str,
+) -> int:
+    import eval  # installed via PYTHONPATH=/app in the training image  # noqa: A001  # pylint: disable=redefined-builtin
+    import logging
+    from google.api_core.exceptions import NotFound
+    from google.cloud import aiplatform
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    metrics = eval.run(
+        run_id=run_id,
+        training_bucket=training_bucket,
+        model_bucket=model_bucket,
+        project_id=project_id,
+        region=region,
+        vertex_experiment=vertex_experiment,
+    )
+    dataset_generation = metrics["dataset_generation"]
+
+    aiplatform.init(project=project_id, location=region)
+    base_model_name = model_resource_name.split("/versions/")[0]
+
+    prod_run_id = None
+    try:
+        prod_model = aiplatform.Model(
+            model_name=f"{base_model_name}@production",
+            project=project_id,
+            location=region,
+        )
+        prod_run_id = prod_model.version_description
+    except NotFound as exc:
+        logger.info("[eval] no production alias found: %s", exc)
+
+    if prod_run_id is None:
+        return dataset_generation
+
+    aiplatform.init(project=project_id, location=region, experiment=vertex_experiment)
+    exp_df = aiplatform.get_experiment_df(experiment=vertex_experiment)
+    expected_run_name = eval._vertex_run_name(prod_run_id, dataset_generation)  # pylint: disable=protected-access
+    if not exp_df[exp_df["run_name"] == expected_run_name].empty:
+        logger.info(
+            "[eval] production run=%s already evaluated at dataset_generation=%d — skipping re-eval",
+            prod_run_id, dataset_generation,
+        )
+        return dataset_generation
+
+    logger.info(
+        "[eval] production run=%s has no eval at dataset_generation=%d — re-evaluating on the current eval set",
+        prod_run_id, dataset_generation,
+    )
+    eval.run(
+        run_id=prod_run_id,
+        training_bucket=training_bucket,
+        model_bucket=model_bucket,
+        project_id=project_id,
+        region=region,
+        vertex_experiment=vertex_experiment,
+    )
+
+    return dataset_generation
 
 
 @dsl.component(
@@ -131,8 +182,10 @@ def promote_model(
     region: str,
     model_resource_name: str,
     vertex_experiment: str,
+    current_dataset_generation: int,
 ) -> bool:
     import logging
+    from google.api_core.exceptions import GoogleAPIError, NotFound
     from google.cloud import aiplatform
     from google.cloud.aiplatform_v1 import ModelServiceClient
     from google.cloud.aiplatform_v1.types import MergeVersionAliasesRequest
@@ -143,13 +196,21 @@ def promote_model(
     aiplatform.init(project=project, location=region)
     base_model_name = model_resource_name.split("/versions/")[0]
 
-    latest_model = aiplatform.Model(
-        model_name=f"{base_model_name}@latest",
-        project=project,
-        location=region,
-    )
-    latest_run_id = latest_model.version_description
-    logger.info("[promote] current run_id=%s", latest_run_id)
+    latest_run_id = None
+    try:
+        latest_model = aiplatform.Model(
+            model_name=f"{base_model_name}@latest",
+            project=project,
+            location=region,
+        )
+        latest_run_id = latest_model.version_description
+        logger.info("[promote] latest run_id=%s", latest_run_id)
+    except NotFound as exc:
+        logger.error(
+            "[promote] gate FAILED: could not resolve '@latest' alias for %s: %s",
+            base_model_name, exc,
+        )
+        return False
 
     prod_run_id = None
     try:
@@ -160,44 +221,50 @@ def promote_model(
         )
         prod_run_id = prod_model.version_description
         logger.info("[promote] production model: run_id=%s", prod_run_id)
-    except Exception:
+    except NotFound:
         pass  # no production alias yet — first run
 
     if prod_run_id is not None:
-        current_map50 = None
+        latest_map50 = None
         prod_map50 = None
 
+        # eval_latest_and_production_models has already re-evaluated the production model
+        # at current_dataset_generation if it wasn't evaluated there already, so both runs'
+        # results are guaranteed to be looked up on the same dataset.
         try:
             aiplatform.init(project=project, location=region, experiment=vertex_experiment)
             exp_df = aiplatform.get_experiment_df(experiment=vertex_experiment)
-            current_rows = exp_df[exp_df["run_name"] == latest_run_id]
-            if not current_rows.empty:
-                current_map50 = float(current_rows.iloc[0]["metric.mAP50"])
-                logger.info("[promote] current mAP50=%.3f", current_map50)
-            prod_rows = exp_df[exp_df["run_name"] == prod_run_id]
+            latest_run_name = f"{latest_run_id}-gen{current_dataset_generation}"
+            prod_run_name = f"{prod_run_id}-gen{current_dataset_generation}"
+            latest_rows = exp_df[exp_df["run_name"] == latest_run_name]
+            if not latest_rows.empty:
+                latest_map50 = float(latest_rows.iloc[0]["metric.mAP50"])
+                logger.info("[promote] latest mAP50=%.3f", latest_map50)
+            prod_rows = exp_df[exp_df["run_name"] == prod_run_name]
             if not prod_rows.empty:
                 prod_map50 = float(prod_rows.iloc[0]["metric.mAP50"])
                 logger.info("[promote] production mAP50=%.3f", prod_map50)
-        except Exception as exc:
+        except (GoogleAPIError, KeyError, ValueError, TypeError) as exc:
             logger.warning("[promote] Vertex AI Experiments lookup failed: %s", exc)
 
-        if current_map50 is None or prod_map50 is None:
+        if latest_map50 is None or prod_map50 is None:
             logger.warning(
-                "[promote] gate FAILED: could not retrieve mAP50 for current or "
-                "production run — skipping"
+                "[promote] gate FAILED: could not retrieve mAP50 for latest or "
+                "production run at dataset_generation=%d — skipping",
+                current_dataset_generation,
             )
             return False
 
-        if current_map50 < prod_map50 - 0.02:
+        if latest_map50 < prod_map50 - 0.02:
             logger.info(
-                "[promote] gate FAILED: current mAP50=%.3f < prod mAP50=%.3f - 0.02 — skipping",
-                current_map50, prod_map50,
+                "[promote] gate FAILED: latest mAP50=%.3f < prod mAP50=%.3f - 0.02 — skipping",
+                latest_map50, prod_map50,
             )
             return False
 
         logger.info(
-            "[promote] gate PASSED: current mAP50=%.3f vs prod mAP50=%.3f",
-            current_map50, prod_map50,
+            "[promote] gate PASSED: latest mAP50=%.3f vs prod mAP50=%.3f",
+            latest_map50, prod_map50,
         )
     else:
         logger.info("[promote] no production model found — auto-promoting")
@@ -280,23 +347,25 @@ def fish_id_training_pipeline(
             .set_memory_request("64G").set_memory_limit("64G")
             .set_retry(num_retries=3)
         )
-        cpu_eval = eval_model(  # pylint: disable=no-member
+        reg_cpu = register_model(
+            project=project, region=region, model_bucket=model_bucket, run_id=run_id,
+        ).after(cpu_train)
+        cpu_eval = eval_latest_and_production_models(  # pylint: disable=no-member
             run_id=run_id,
             training_bucket=training_bucket,
             model_bucket=model_bucket,
             project_id=project,
             region=region,
             vertex_experiment=vertex_experiment,
-        ).after(cpu_train)
-        reg_cpu = register_model(
-            project=project, region=region, model_bucket=model_bucket, run_id=run_id,
-        ).after(cpu_eval)
+            model_resource_name=reg_cpu.output,
+        ).set_retry(num_retries=3).after(reg_cpu)
         promote_cpu = promote_model(
             project=project,
             region=region,
             model_resource_name=reg_cpu.output,
             vertex_experiment=vertex_experiment,
-        ).after(reg_cpu)
+            current_dataset_generation=cpu_eval.output,
+        ).after(cpu_eval)
         with dsl.If(promote_cpu.output == True, name="cpu-gate-passed"):  # pylint: disable=singleton-comparison
             trigger_deploy(project=project, github_repo=github_repo).after(promote_cpu)  # pylint: disable=no-member
 
@@ -318,23 +387,25 @@ def fish_id_training_pipeline(
             )
             .set_retry(num_retries=3)
         )
-        gpu_eval = eval_model(  # pylint: disable=no-member
+        reg_gpu = register_model(
+            project=project, region=region, model_bucket=model_bucket, run_id=run_id,
+        ).after(gpu_train)
+        gpu_eval = eval_latest_and_production_models(  # pylint: disable=no-member
             run_id=run_id,
             training_bucket=training_bucket,
             model_bucket=model_bucket,
             project_id=project,
             region=region,
             vertex_experiment=vertex_experiment,
-        ).after(gpu_train)
-        reg_gpu = register_model(
-            project=project, region=region, model_bucket=model_bucket, run_id=run_id,
-        ).after(gpu_eval)
+            model_resource_name=reg_gpu.output,
+        ).set_retry(num_retries=3).after(reg_gpu)
         promote_gpu = promote_model(
             project=project,
             region=region,
             model_resource_name=reg_gpu.output,
             vertex_experiment=vertex_experiment,
-        ).after(reg_gpu)
+            current_dataset_generation=gpu_eval.output,
+        ).after(gpu_eval)
         with dsl.If(promote_gpu.output == True, name="gpu-gate-passed"):  # pylint: disable=singleton-comparison
             trigger_deploy(project=project, github_repo=github_repo).after(promote_gpu)  # pylint: disable=no-member
 

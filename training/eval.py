@@ -50,6 +50,12 @@ def _get_class_names(storage_client: gcs.Client, training_bucket: str) -> list[s
     return data.get("names", [])
 
 
+def _read_dataset_generation(storage_client: gcs.Client, training_bucket: str) -> int:
+    blob = storage_client.bucket(training_bucket).blob("data.yaml")
+    blob.reload()
+    return blob.generation
+
+
 def _write_data_yaml(class_names: list[str], local_dir: Path) -> str:
     path = local_dir / "data.yaml"
     with open(path, "w", encoding="utf-8") as f:
@@ -80,18 +86,28 @@ def _run_validation(data_yaml_path: str) -> dict:
     }
 
 
+def _vertex_run_name(run_id: str, dataset_generation: int) -> str:
+    return f"{run_id}-gen{dataset_generation}"
+
+
 def _log_to_vertex(
-    project_id: str, region: str, experiment: str, run_id: str, metrics: dict
+    project_id: str, region: str, experiment: str, run_id: str,
+    dataset_generation: int, metrics: dict,
 ) -> None:
+    vertex_run_name = _vertex_run_name(run_id, dataset_generation)
     aiplatform.init(project=project_id, location=region, experiment=experiment)
-    with aiplatform.start_run(run_id):
+    with aiplatform.start_run(vertex_run_name):
+        aiplatform.log_params({"dataset_generation": dataset_generation})
         aiplatform.log_metrics({
             "mAP50": metrics["mAP50"],
             "mAP50_95": metrics["mAP50_95"],
             "precision": metrics["precision"],
             "recall": metrics["recall"],
         })
-    _logger.info("[eval] metrics logged to Vertex AI experiment=%s run=%s", experiment, run_id)
+    _logger.info(
+        "[eval] metrics logged to Vertex AI experiment=%s run=%s dataset_generation=%d",
+        experiment, vertex_run_name, dataset_generation,
+    )
 
 
 def run(
@@ -101,7 +117,7 @@ def run(
     project_id: str,
     region: str,
     vertex_experiment: str,
-) -> None:
+) -> dict:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     _logger.info("[eval] run_id=%s", run_id)
 
@@ -111,11 +127,14 @@ def run(
     class_names = _get_class_names(storage_client, training_bucket)
     data_yaml_path = _write_data_yaml(class_names, _DATA_DIR)
     _download_model(storage_client, model_bucket, run_id)
+    dataset_generation = _read_dataset_generation(storage_client, training_bucket)
+    _logger.info("[eval] dataset_generation=%d", dataset_generation)
 
     _logger.info("[eval] running YOLO validation")
     metrics = _run_validation(data_yaml_path)
     _logger.info("[eval] metrics: %s", metrics)
 
-    _log_to_vertex(project_id, region, vertex_experiment, run_id, metrics)
+    _log_to_vertex(project_id, region, vertex_experiment, run_id, dataset_generation, metrics)
 
     _logger.info("[eval] done")
+    return {**metrics, "dataset_generation": dataset_generation}

@@ -9,11 +9,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.api_core.exceptions import NotFound
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pipeline.pipeline import (  # noqa: E402
-    eval_model,
+    eval_latest_and_production_models,
     fish_id_training_pipeline,
     promote_model,
     register_model,
@@ -43,6 +44,23 @@ class TestPipelineCompilation:
         spec = _json.loads(output.read_text())
         assert spec["pipelineInfo"]["name"] == "fish-id-training-pipeline"
 
+    def test_eval_latest_and_production_models_task_retries(self, tmp_path):
+        import json as _json
+        from kfp import compiler
+        output = tmp_path / "pipeline.json"
+        compiler.Compiler().compile(fish_id_training_pipeline, str(output))
+        spec = _json.loads(output.read_text())
+
+        # tasks live inside the cpu/gpu conditional branches, not at the pipeline root
+        eval_retry_counts = [
+            task["retryPolicy"]["maxRetryCount"]
+            for comp in spec["components"].values()
+            for task_name, task in comp.get("dag", {}).get("tasks", {}).items()
+            if task_name.startswith("eval-latest-and-production-models")
+        ]
+        assert eval_retry_counts, "expected eval_latest_and_production_models tasks in the compiled spec"
+        assert all(count == 3 for count in eval_retry_counts)
+
 
 class TestTrainModel:
     def test_component_has_expected_inputs(self):
@@ -58,18 +76,130 @@ class TestTrainModel:
         assert "fish-id-train" in image
 
 
-class TestEvalModel:
+class TestEvalLatestAndProductionModels:
+    def _make_mocks(self):
+        mock_aip = MagicMock()
+        mock_eval = MagicMock()
+        return mock_aip, mock_eval
+
+    def _run(self, mock_aip, mock_eval, **kwargs):
+        google_cloud_mock = MagicMock(aiplatform=mock_aip)
+        with patch.dict(sys.modules, {
+            "google.cloud": google_cloud_mock,
+            "google.cloud.aiplatform": mock_aip,
+            "eval": mock_eval,
+        }):
+            return eval_latest_and_production_models.python_func(
+                run_id=kwargs.get("run_id", "run-new"),
+                training_bucket=kwargs.get("training_bucket", "test-training-bucket"),
+                model_bucket=kwargs.get("model_bucket", "test-model-bucket"),
+                project_id=kwargs.get("project_id", "test-project"),
+                region=kwargs.get("region", "us-central1"),
+                vertex_experiment=kwargs.get("vertex_experiment", "fish-id-eval"),
+                model_resource_name=kwargs.get(
+                    "model_resource_name",
+                    "projects/test-project/locations/us-central1/models/123/versions/2",
+                ),
+            )
+
     def test_component_has_expected_inputs(self):
-        inputs = eval_model.component_spec.inputs
+        inputs = eval_latest_and_production_models.component_spec.inputs
         expected = {
             "run_id", "training_bucket", "model_bucket",
-            "project_id", "region", "vertex_experiment",
+            "project_id", "region", "vertex_experiment", "model_resource_name",
         }
         assert set(inputs.keys()) == expected
 
     def test_component_uses_training_image(self):
-        image = eval_model.component_spec.implementation.container.image
+        image = eval_latest_and_production_models.component_spec.implementation.container.image
         assert "fish-id-train" in image
+
+    def test_evaluates_current_run_id(self):
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = NotFound("no production alias")
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+
+        self._run(mock_aip, mock_eval, run_id="run-new")
+
+        first_call_kwargs = mock_eval.run.call_args_list[0].kwargs
+        assert first_call_kwargs["run_id"] == "run-new"
+
+    def test_returns_dataset_generation(self):
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = NotFound("no production alias")
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+
+        result = self._run(mock_aip, mock_eval)
+
+        assert result == 42
+
+    def test_resolves_production_alias_from_the_registered_models_base_resource_name(self):
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = NotFound("no production alias")
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+
+        self._run(
+            mock_aip, mock_eval,
+            model_resource_name="projects/p/locations/us-central1/models/123/versions/7",
+        )
+
+        model_name_arg = mock_aip.Model.call_args.kwargs["model_name"]
+        assert model_name_arg == "projects/p/locations/us-central1/models/123@production"
+
+    def test_skips_production_check_when_no_production_alias(self):
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = NotFound("no production alias")
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+
+        self._run(mock_aip, mock_eval)
+
+        assert mock_eval.run.call_count == 1
+
+    def test_propagates_unexpected_error_resolving_production_alias(self):
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = RuntimeError("transient API error")
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+
+        with pytest.raises(RuntimeError, match="transient API error"):
+            self._run(mock_aip, mock_eval)
+
+    def test_reevaluates_production_when_not_already_evaluated_at_current_generation(self):
+        import pandas as pd
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = [MagicMock(version_description="run-prod")]
+        mock_aip.get_experiment_df.return_value = pd.DataFrame([
+            {"run_name": "run-new-gen42", "metric.mAP50": 0.85},
+        ])
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+        mock_eval._vertex_run_name.side_effect = lambda run_id, gen: f"{run_id}-gen{gen}"
+
+        self._run(mock_aip, mock_eval, training_bucket="tb", model_bucket="mb")
+
+        assert mock_eval.run.call_count == 2
+        second_call_kwargs = mock_eval.run.call_args_list[1].kwargs
+        assert second_call_kwargs == {
+            "run_id": "run-prod",
+            "training_bucket": "tb",
+            "model_bucket": "mb",
+            "project_id": "test-project",
+            "region": "us-central1",
+            "vertex_experiment": "fish-id-eval",
+        }
+
+    def test_skips_reeval_when_already_evaluated_at_current_generation(self):
+        import pandas as pd
+        mock_aip, mock_eval = self._make_mocks()
+        mock_aip.Model.side_effect = [MagicMock(version_description="run-prod")]
+        mock_aip.get_experiment_df.return_value = pd.DataFrame([
+            {"run_name": "run-new-gen42", "metric.mAP50": 0.85},
+            {"run_name": "run-prod-gen42", "metric.mAP50": 0.90},
+        ])
+        mock_eval.run.return_value = {"mAP50": 0.85, "dataset_generation": 42}
+        mock_eval._vertex_run_name.side_effect = lambda run_id, gen: f"{run_id}-gen{gen}"
+
+        self._run(mock_aip, mock_eval)
+
+        assert mock_eval.run.call_count == 1
 
 
 class TestRegisterModel:
@@ -164,16 +294,49 @@ class TestPromoteModel:
                     "projects/test-project/locations/us-central1/models/123/versions/2",
                 ),
                 vertex_experiment=kwargs.get("vertex_experiment", "fish-id-eval"),
+                current_dataset_generation=kwargs.get("current_dataset_generation", 42),
             )
+
+    def test_component_has_expected_inputs(self):
+        inputs = promote_model.component_spec.inputs
+        expected = {
+            "project", "region", "model_resource_name", "vertex_experiment",
+            "current_dataset_generation",
+        }
+        assert set(inputs.keys()) == expected
 
     def test_auto_promotes_when_no_production_model_exists(self):
         mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
         latest_model = MagicMock(version_description="run-abc")
-        mock_aip.Model.side_effect = [latest_model, Exception("no production alias")]
+        mock_aip.Model.side_effect = [latest_model, NotFound("no production alias")]
 
         result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
 
         assert result is True
+
+    def test_fails_gate_when_no_model_marked_latest(self):
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        mock_aip.Model.side_effect = NotFound("no model with alias 'latest'")
+
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+
+        assert result is False
+
+    def test_does_not_tag_production_when_no_model_marked_latest(self):
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        mock_aip.Model.side_effect = NotFound("no model with alias 'latest'")
+
+        self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+
+        mock_service_client = mock_aip_v1.ModelServiceClient.return_value
+        mock_service_client.merge_version_aliases.assert_not_called()
+
+    def test_propagates_unexpected_error_resolving_latest(self):
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        mock_aip.Model.side_effect = RuntimeError("transient API error")
+
+        with pytest.raises(RuntimeError, match="transient API error"):
+            self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
 
     def test_promotes_when_current_better_than_production(self):
         import pandas as pd
@@ -182,11 +345,11 @@ class TestPromoteModel:
         prod_model = MagicMock(version_description="run-prod")
         mock_aip.Model.side_effect = [latest_model, prod_model]
         mock_aip.get_experiment_df.return_value = pd.DataFrame([
-            {"run_name": "run-new", "metric.mAP50": 0.85},
-            {"run_name": "run-prod", "metric.mAP50": 0.80},
+            {"run_name": "run-new-gen42", "metric.mAP50": 0.85},
+            {"run_name": "run-prod-gen42", "metric.mAP50": 0.80},
         ])
 
-        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types, current_dataset_generation=42)
 
         assert result is True
 
@@ -197,18 +360,58 @@ class TestPromoteModel:
         prod_model = MagicMock(version_description="run-prod")
         mock_aip.Model.side_effect = [latest_model, prod_model]
         mock_aip.get_experiment_df.return_value = pd.DataFrame([
-            {"run_name": "run-new", "metric.mAP50": 0.60},
-            {"run_name": "run-prod", "metric.mAP50": 0.80},
+            {"run_name": "run-new-gen42", "metric.mAP50": 0.60},
+            {"run_name": "run-prod-gen42", "metric.mAP50": 0.80},
         ])
 
-        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types, current_dataset_generation=42)
+
+        assert result is False
+
+    def test_skips_gate_when_experiment_lookup_raises_api_error(self):
+        from google.api_core.exceptions import ServiceUnavailable
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-new")
+        prod_model = MagicMock(version_description="run-prod")
+        mock_aip.Model.side_effect = [latest_model, prod_model]
+        mock_aip.get_experiment_df.side_effect = ServiceUnavailable("backend unavailable")
+
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types, current_dataset_generation=42)
+
+        assert result is False
+
+    def test_propagates_unexpected_error_from_experiment_lookup(self):
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-new")
+        prod_model = MagicMock(version_description="run-prod")
+        mock_aip.Model.side_effect = [latest_model, prod_model]
+        mock_aip.get_experiment_df.side_effect = NameError("bug, not an expected failure")
+
+        with pytest.raises(NameError):
+            self._run(mock_aip, mock_aip_v1, mock_aip_v1_types, current_dataset_generation=42)
+
+    def test_skips_when_production_has_no_result_at_current_generation(self):
+        import pandas as pd
+        mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
+        latest_model = MagicMock(version_description="run-new")
+        prod_model = MagicMock(version_description="run-prod")
+        mock_aip.Model.side_effect = [latest_model, prod_model]
+        # Production was only ever evaluated at generation 41 — eval_latest_and_production_models
+        # should have re-evaluated it at 42 before promote_model ever runs; if that didn't happen,
+        # fail safe rather than compare against a stale number.
+        mock_aip.get_experiment_df.return_value = pd.DataFrame([
+            {"run_name": "run-new-gen42", "metric.mAP50": 0.85},
+            {"run_name": "run-prod-gen41", "metric.mAP50": 0.80},
+        ])
+
+        result = self._run(mock_aip, mock_aip_v1, mock_aip_v1_types, current_dataset_generation=42)
 
         assert result is False
 
     def test_calls_merge_version_aliases_on_promote(self):
         mock_aip, mock_aip_v1, mock_aip_v1_types = self._make_mocks()
         latest_model = MagicMock(version_description="run-abc")
-        mock_aip.Model.side_effect = [latest_model, Exception("no production alias")]
+        mock_aip.Model.side_effect = [latest_model, NotFound("no production alias")]
 
         self._run(mock_aip, mock_aip_v1, mock_aip_v1_types)
 
