@@ -221,7 +221,7 @@ gcloud artifacts docker images list \
 
 ### 2. Upload training data
 
-Export from Roboflow and sync to the GCS training bucket. A successful sync automatically submits a training run against the new data, so also set the variables `scripts/trigger-training.py` needs (`GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, `MODEL_BUCKET`, `GITHUB_REPO`, `VERTEX_EXPERIMENT`):
+Export from Roboflow and sync to the GCS training bucket. A successful sync automatically submits a training run against the new data, so also set the variables `scripts/trigger-training.py` needs (`GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, `MODEL_BUCKET`, `GITHUB_REPO`):
 
 ```bash
 export ROBOFLOW_API_KEY=your_key_here
@@ -230,7 +230,6 @@ export GCP_REGION=us-central1
 export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
 export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
-export VERTEX_EXPERIMENT=fish-id-eval
 
 python scripts/update-dataset.py \
   --roboflow-version ${ROBOFLOW_VERSION_NUMBER} \
@@ -251,7 +250,6 @@ export GCP_REGION=us-central1
 export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
 export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
-export VERTEX_EXPERIMENT=fish-id-eval
 
 python scripts/trigger-training.py
 ```
@@ -335,4 +333,4 @@ source scripts/.venv/bin/activate
 |---|---|
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds via Cloud Build, and deploys to Cloud Run. Use to deploy a model retrieved from the training pipeline. |
 | `update-dataset.py` | Exports a Roboflow dataset version in YOLO format and syncs images and labels to the GCS training bucket, then calls `trigger-training.py` to submit a training run (`--no-trigger-training` to skip). Requires `ROBOFLOW_API_KEY` plus everything `trigger-training.py` requires. |
-| `trigger-training.py` | Submits a Vertex AI PipelineJob using the compiled pipeline template and training image from GCS. Requires `GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, `MODEL_BUCKET`, `GITHUB_REPO`, and `VERTEX_EXPERIMENT` env vars. |
+| `trigger-training.py` | Submits a Vertex AI PipelineJob using the compiled pipeline template and training image from GCS. Requires `GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, `MODEL_BUCKET`, and `GITHUB_REPO` env vars. |

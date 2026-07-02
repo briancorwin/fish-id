@@ -23,6 +23,9 @@ _TRAINING_IMAGE = (
 
 _logger = logging.getLogger(__name__)
 
+# Fixed rather than a pipeline parameter — there is only ever one eval experiment.
+_VERTEX_EXPERIMENT = "fish-id-eval"
+
 
 @dsl.component(base_image=_TRAINING_IMAGE)
 def train_model(
@@ -319,7 +322,6 @@ def fish_id_training_pipeline(
     project: str,
     region: str,
     github_repo: str,
-    vertex_experiment: str,
     model_name: str = _CONFIG["model"],
     epochs: int = _CONFIG["epochs"],
     imgsz: int = _CONFIG["imgsz"],
@@ -356,14 +358,14 @@ def fish_id_training_pipeline(
             model_bucket=model_bucket,
             project_id=project,
             region=region,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             model_resource_name=reg_cpu.output,
         ).set_retry(num_retries=3).after(reg_cpu)
         promote_cpu = promote_model(
             project=project,
             region=region,
             model_resource_name=reg_cpu.output,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             current_dataset_generation=cpu_eval.output,
         ).after(cpu_eval)
         with dsl.If(promote_cpu.output == True, name="cpu-gate-passed"):  # pylint: disable=singleton-comparison
@@ -396,14 +398,14 @@ def fish_id_training_pipeline(
             model_bucket=model_bucket,
             project_id=project,
             region=region,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             model_resource_name=reg_gpu.output,
         ).set_retry(num_retries=3).after(reg_gpu)
         promote_gpu = promote_model(
             project=project,
             region=region,
             model_resource_name=reg_gpu.output,
-            vertex_experiment=vertex_experiment,
+            vertex_experiment=_VERTEX_EXPERIMENT,
             current_dataset_generation=gpu_eval.output,
         ).after(gpu_eval)
         with dsl.If(promote_gpu.output == True, name="gpu-gate-passed"):  # pylint: disable=singleton-comparison

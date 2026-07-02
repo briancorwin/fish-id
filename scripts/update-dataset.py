@@ -23,7 +23,7 @@ Environment variables:
     ROBOFLOW_API_KEY   Roboflow API key (required)
 
     Plus everything required by scripts/trigger-training.py (GCP_PROJECT_ID, GCP_REGION,
-    TRAINING_BUCKET, MODEL_BUCKET, GITHUB_REPO, VERTEX_EXPERIMENT) to submit the training run.
+    TRAINING_BUCKET, MODEL_BUCKET, GITHUB_REPO) to submit the training run.
 """
 
 import argparse
