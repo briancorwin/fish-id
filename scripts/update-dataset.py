@@ -13,17 +13,18 @@ scripts/trigger-training.py (requires that script's environment variables to als
 Usage:
     python scripts/update-dataset.py \
         --roboflow-version 5 \
-        --bucket ${GCP_PROJECT_ID}-fish-id-training \
         --workspace my-workspace \
         --project fish-id
 
 Pass --no-trigger-training to sync the dataset without submitting a training run.
 
 Environment variables:
+    GCP_PROJECT_ID     GCP project ID (required) — the training bucket is always
+                       {GCP_PROJECT_ID}-fish-id-training
     ROBOFLOW_API_KEY   Roboflow API key (required)
 
-    Plus everything required by scripts/trigger-training.py (GCP_PROJECT_ID, GCP_REGION,
-    TRAINING_BUCKET, MODEL_BUCKET, GITHUB_REPO) to submit the training run.
+    Plus everything else required by scripts/trigger-training.py (GCP_REGION, GITHUB_REPO)
+    to submit the training run.
 """
 
 import argparse
@@ -48,7 +49,6 @@ def main() -> None:
         description="Sync a Roboflow dataset version to the GCS training bucket."
     )
     parser.add_argument("--roboflow-version", required=True, type=int)
-    parser.add_argument("--bucket", required=True, help="GCS training bucket name")
     parser.add_argument("--workspace", required=True, help="Roboflow workspace slug")
     parser.add_argument("--project", required=True, help="Roboflow project slug")
     parser.add_argument(
@@ -60,6 +60,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Bucket name always follows the project's standard naming convention — not configurable.
+    bucket = f"{os.environ['GCP_PROJECT_ID']}-fish-id-training"
     api_key = os.environ["ROBOFLOW_API_KEY"]
 
     try:
@@ -109,7 +111,7 @@ def main() -> None:
 
         # Step 2: Sync to GCS flat pool
         print("Step 2: Syncing to GCS...")
-        gcs_base = f"gs://{args.bucket}"
+        gcs_base = f"gs://{bucket}"
         _rsync_to_gcs(required_dirs["train images"], f"{gcs_base}/images/train/")
         _rsync_to_gcs(required_dirs["train labels"], f"{gcs_base}/labels/train/")
         _rsync_to_gcs(required_dirs["val images"],   f"{gcs_base}/images/val/")
@@ -135,12 +137,12 @@ def main() -> None:
             yaml.dump(training_yaml, f)
 
         storage_client = gcs.Client()
-        blob = storage_client.bucket(args.bucket).blob("data.yaml")
+        blob = storage_client.bucket(bucket).blob("data.yaml")
         blob.upload_from_filename(str(training_yaml_file))
         blob.reload()
         dataset_generation = blob.generation
 
-    print(f"\nDone. Dataset synced to gs://{args.bucket}/")
+    print(f"\nDone. Dataset synced to gs://{bucket}/")
     print(f"  Classes ({len(class_names)}): {', '.join(class_names)}")
     print(f"  Dataset generation: {dataset_generation}")
 

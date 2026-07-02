@@ -221,19 +221,16 @@ gcloud artifacts docker images list \
 
 ### 2. Upload training data
 
-Export from Roboflow and sync to the GCS training bucket. A successful sync automatically submits a training run against the new data, so also set the variables `scripts/trigger-training.py` needs (`GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, `MODEL_BUCKET`, `GITHUB_REPO`):
+Export from Roboflow and sync to the GCS training bucket (always `${GCP_PROJECT_ID}-fish-id-training`). A successful sync automatically submits a training run against the new data, so also set the variables `scripts/trigger-training.py` needs (`GCP_PROJECT_ID`, `GCP_REGION`, `GITHUB_REPO`):
 
 ```bash
 export ROBOFLOW_API_KEY=your_key_here
 export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
-export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
-export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
 python scripts/update-dataset.py \
   --roboflow-version ${ROBOFLOW_VERSION_NUMBER} \
-  --bucket ${GCP_PROJECT_ID}-fish-id-training \
   --workspace ${ROBOFLOW_WORKSPACE} \
   --project ${ROBOFLOW_PROJECT}
 ```
@@ -247,14 +244,12 @@ Training is triggered automatically after step 1 (container/config/pipeline chan
 ```bash
 export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
-export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
-export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
 python scripts/trigger-training.py
 ```
 
-Use `--image <uri>` to override the training container image. Use `--cpu-only` to skip the GPU accelerator.
+Use `--cpu-only` to skip the GPU accelerator.
 
 The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. After training, the pipeline evaluates the model against a held-out eval set; if it clears the quality gate against the current production model, it's registered in Vertex AI Model Registry with a `production` alias and `deploy.yml` is triggered automatically to redeploy Cloud Run with the new model. See [docs/training-pipeline.md](docs/training-pipeline.md) for the full flow.
 
@@ -333,4 +328,4 @@ source scripts/.venv/bin/activate
 |---|---|
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds via Cloud Build, and deploys to Cloud Run. Use to deploy a model retrieved from the training pipeline. |
 | `update-dataset.py` | Exports a Roboflow dataset version in YOLO format and syncs images and labels to the GCS training bucket, then calls `trigger-training.py` to submit a training run (`--no-trigger-training` to skip). Requires `ROBOFLOW_API_KEY` plus everything `trigger-training.py` requires. |
-| `trigger-training.py` | Submits a Vertex AI PipelineJob using the compiled pipeline template and training image from GCS. Requires `GCP_PROJECT_ID`, `GCP_REGION`, `TRAINING_BUCKET`, `MODEL_BUCKET`, and `GITHUB_REPO` env vars. |
+| `trigger-training.py` | Submits a Vertex AI PipelineJob using the compiled pipeline template and training image from GCS. Requires `GCP_PROJECT_ID`, `GCP_REGION`, and `GITHUB_REPO` env vars. |

@@ -64,16 +64,15 @@ export ROBOFLOW_API_KEY=your_key_here
 # automatically submits a training run against the newly-synced data.
 export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
-export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
-export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name
 
 python scripts/update-dataset.py \
     --roboflow-version 5 \
-    --bucket ${GCP_PROJECT_ID}-fish-id-training \
     --workspace my-workspace \
     --project fish-id
 ```
+
+The training bucket is always `${GCP_PROJECT_ID}-fish-id-training` — not configurable.
 
 Pass `--no-trigger-training` to sync without submitting a training run (default is to trigger). Useful when staging several dataset versions before training on the final one.
 
@@ -136,14 +135,11 @@ Both CI (`train-pipeline.yml`'s `trigger-training` job) and a dataset sync run *
 ```bash
 export GCP_PROJECT_ID=your-project-id
 export GCP_REGION=us-central1
-export TRAINING_BUCKET=${GCP_PROJECT_ID}-fish-id-training
-export MODEL_BUCKET=${GCP_PROJECT_ID}-fish-id-models
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
 python scripts/trigger-training.py
 ```
 
-Use `--image <uri>` to override the training container image (e.g. to pin a specific `:{SHA}` tag).
 Use `--cpu-only` to skip the GPU accelerator and run on a larger CPU machine instead.
 
 The run appears under **Vertex AI → Pipelines → Runs** in the Cloud Console.
@@ -156,12 +152,12 @@ The pipeline branches on the `cpu_only` parameter:
 
 - **Default (GPU)**: `n1-standard-4` + 1x `NVIDIA_TESLA_T4`, `strategy=SPOT`, `restart_job_on_worker_restart=True` (via `create_custom_training_job_from_component`)
 - **`--cpu-only`**: same component run as a plain KFP step with custom resource requests — 16 vCPU / 64G memory, no accelerator
-- **Container image**: `:latest` tag in Artifact Registry (or `--image` override)
+- **Container image**: `:latest` tag in Artifact Registry (not overridable)
 - **Timeout**: `7200s` (2 hours)
 - **Retries**: `set_retry(num_retries=3)` on both branches
 - **Service account**: `fish-id-workflows-sa` (there is no separate training service account — training, eval, register, and promote all run under the pipeline's own SA)
 
-Both branches are resumable: if `gs://{MODEL_BUCKET}/runs/{run_id}/checkpoint/weights/last.pt` exists for the given `run_id`, training resumes from it instead of starting fresh. A checkpoint is uploaded after every epoch. `--run-id <existing-id>` on `trigger-training.py` restarts an interrupted run from its last checkpoint.
+Both branches are resumable: if `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/checkpoint/weights/last.pt` exists for the given `run_id`, training resumes from it instead of starting fresh. A checkpoint is uploaded after every epoch. `--run-id <existing-id>` on `trigger-training.py` restarts an interrupted run from its last checkpoint.
 
 **`training/config.yaml`** — single training config baked into the container image, used as the pipeline's default parameter values:
 
@@ -182,32 +178,31 @@ patience: 20
 | Parameter | Example | Derived from |
 |---|---|---|
 | `run_id` | `run-2026-06-05-143000` | Generated at submission: UTC timestamp `run-YYYY-MM-DD-HHMMSS` |
-| `training_bucket` | `my-project-fish-id-training` | Env var `TRAINING_BUCKET` |
-| `model_bucket` | `my-project-fish-id-models` | Env var `MODEL_BUCKET` |
 | `project` | `my-gcp-project` | Env var `GCP_PROJECT_ID` |
 | `region` | `us-central1` | Env var `GCP_REGION` |
-| `training_image` | `...fish-id-train:latest` | Artifact Registry `:latest` tag |
 | `github_repo` | `briancorwin/fish-id` | Env var `GITHUB_REPO` |
 | `cpu_only` | `false` | `--cpu-only` flag (default: false) |
 | `model_name`, `epochs`, `imgsz`, `batch`, `optimizer`, `lr0`, `patience` | see above | Default from `training/config.yaml` at compile time |
 
+The training/model bucket names (`{PROJECT_ID}-fish-id-training` / `{PROJECT_ID}-fish-id-models`) and the training container image (`{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:latest`) are not pipeline parameters — the pipeline derives them from `project`/`region` internally, so they always follow the standard naming convention and can't drift from it.
+
 **Training script behavior (`train.py`):**
-1. Read the dataset generation from `{TRAINING_BUCKET}/data.yaml` (its GCS object generation becomes `dataset_generation` in the run's metadata)
-2. Download `data.yaml` + all `train`/`val` images and labels from `{TRAINING_BUCKET}` to `/app/data/`
-3. If `gs://{MODEL_BUCKET}/runs/{run_id}/checkpoint/weights/last.pt` exists, resume from it; otherwise `YOLO(config["model"]).train(data=..., **params)` from scratch, uploading `weights/last.pt` to that checkpoint path after every epoch
+1. Read the dataset generation from `{PROJECT_ID}-fish-id-training/data.yaml` (its GCS object generation becomes `dataset_generation` in the run's metadata)
+2. Download `data.yaml` + all `train`/`val` images and labels from `{PROJECT_ID}-fish-id-training` to `/app/data/`
+3. If `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/checkpoint/weights/last.pt` exists, resume from it; otherwise `YOLO(config["model"]).train(data=..., **params)` from scratch, uploading `weights/last.pt` to that checkpoint path after every epoch
 4. Export the best checkpoint to ONNX
 5. Build `metadata.json` (run_id, dataset_generation, container image tag, model architecture, training args, duration, GPU info, etc.)
-6. Upload `fish-id.onnx` and `metadata.json` to `gs://{MODEL_BUCKET}/runs/run-{R}/`
+6. Upload `fish-id.onnx` and `metadata.json` to `gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/`
 
 **`register_model` component:**
-- Registers `gs://{MODEL_BUCKET}/runs/{run_id}/` as the artifact URI in Vertex AI Model Registry
+- Registers `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/` as the artifact URI in Vertex AI Model Registry
 - Display name: `"fish-id"`; version aliases: `"latest"`; `is_default_version=True`; `version_description=run_id`
 - If a `"fish-id"` model already exists, adds a new version (passes `parent_model`); otherwise creates the model
 - Returns `model_resource_name` — passed to both `eval_latest_and_production_models` and `promote_model` downstream
 
 **Eval Job (`eval_latest_and_production_models` component, `training/eval.py`)** — runs after registration, on the training container image, as a plain KFP step (not a CustomJob). Uses `set_retry(num_retries=3)` on both branches, same as `train_model`, to reduce the odds of a transient failure (GCS blip, Vertex AI API hiccup) leaving `"latest"` tagged with no eval result:
-1. Download `images/eval/` + `labels/eval/` and `data.yaml` from `{TRAINING_BUCKET}`
-2. Download `fish-id.onnx` for `run_id` from `{MODEL_BUCKET}`
+1. Download `images/eval/` + `labels/eval/` and `data.yaml` from `{PROJECT_ID}-fish-id-training`
+2. Download `fish-id.onnx` for `run_id` from `{PROJECT_ID}-fish-id-models`
 3. Read the eval dataset's GCS object generation from `data.yaml` (same `dataset_generation` concept as training)
 4. Run `YOLO(...).val(...)` against the eval split and compute `mAP50`, `mAP50_95`, `precision`, `recall`, and per-class `mAP50`
 5. Log `dataset_generation` as a param and the metrics to the `fish-id-eval` Vertex AI Experiment (fixed name, not configurable). The run is always named `{run_id}-gen{dataset_generation}` — this single naming rule (`eval._vertex_run_name()`) is used for every eval run, so a given model's eval result at a given dataset generation always resolves to the same, predictable name

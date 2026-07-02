@@ -95,8 +95,6 @@ jobs:
       contents: read
       id-token: write
     env:
-      TRAINING_BUCKET: ${{ secrets.GCP_PROJECT_ID }}-fish-id-training
-      MODEL_BUCKET: ${{ secrets.GCP_PROJECT_ID }}-fish-id-models
       GITHUB_REPO: ${{ github.repository }}
 
     steps:

@@ -14,8 +14,6 @@ Flags:
 Environment variables:
     GCP_PROJECT_ID      GCP project ID (required)
     GCP_REGION          GCP region (required)
-    TRAINING_BUCKET     GCS training bucket name (required)
-    MODEL_BUCKET        GCS models bucket name (required)
 """
 
 import argparse
@@ -44,9 +42,11 @@ def main() -> None:
 
     project = os.environ["GCP_PROJECT_ID"]
     region = os.environ["GCP_REGION"]
-    training_bucket = os.environ["TRAINING_BUCKET"]
-    model_bucket = os.environ["MODEL_BUCKET"]
     github_repo = os.environ["GITHUB_REPO"]
+
+    # Bucket names always follow the project's standard naming convention — not configurable.
+    training_bucket = f"{project}-fish-id-training"
+    model_bucket = f"{project}-fish-id-models"
 
     run_id = args.run_id if args.run_id else _make_run_id()
     pipeline_template_uri = f"gs://{model_bucket}/pipeline/fish-id-training-pipeline.json"
@@ -63,8 +63,6 @@ def main() -> None:
         template_path=pipeline_template_uri,
         pipeline_root=f"gs://{model_bucket}/pipeline-root",
         parameter_values={
-            "training_bucket": training_bucket,
-            "model_bucket": model_bucket,
             "run_id": run_id,
             "project": project,
             "region": region,

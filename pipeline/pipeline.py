@@ -13,12 +13,10 @@ _CONFIG = yaml.safe_load(
     (Path(__file__).parent.parent / "training" / "config.yaml").read_text(encoding="utf-8")
 )
 
-# Resolved at pipeline compile time from CI env vars (GCP_REGION, GCP_PROJECT_ID).
-# Override by setting TRAINING_IMAGE explicitly.
+# Resolved at pipeline compile time from CI env vars.
 _TRAINING_IMAGE = (
-    os.environ.get("TRAINING_IMAGE")
-    or f"{os.environ.get('GCP_REGION', 'us-central1')}-docker.pkg.dev"
-       f"/{os.environ.get('GCP_PROJECT_ID', 'unknown')}/fish-id/fish-id-train:latest"
+    f"{os.environ.get('GCP_REGION', 'us-central1')}-docker.pkg.dev"
+    f"/{os.environ.get('GCP_PROJECT_ID', 'unknown')}/fish-id/fish-id-train:latest"
 )
 
 _logger = logging.getLogger(__name__)
@@ -316,8 +314,6 @@ def trigger_deploy(
 
 @dsl.pipeline(name="fish-id-training-pipeline")
 def fish_id_training_pipeline(
-    training_bucket: str,
-    model_bucket: str,
     run_id: str,
     project: str,
     region: str,
@@ -331,6 +327,10 @@ def fish_id_training_pipeline(
     patience: int = _CONFIG["patience"],
     cpu_only: bool = False,
 ) -> None:
+    # Bucket names always follow the project's standard naming convention — not configurable.
+    training_bucket = f"{project}-fish-id-training"
+    model_bucket = f"{project}-fish-id-models"
+
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
         cpu_train = (
             train_model(  # pylint: disable=no-member
