@@ -14,6 +14,7 @@ Flags:
 Environment variables:
     GCP_PROJECT_ID      GCP project ID (required)
     GCP_REGION          GCP region (required)
+    GITHUB_REPO         GitHub repository in owner/name form (required)
 """
 
 import argparse
@@ -44,8 +45,7 @@ def main() -> None:
     region = os.environ["GCP_REGION"]
     github_repo = os.environ["GITHUB_REPO"]
 
-    # Bucket names always follow the project's standard naming convention — not configurable.
-    training_bucket = f"{project}-fish-id-training"
+    # Bucket name always follows the project's standard naming convention — not configurable.
     model_bucket = f"{project}-fish-id-models"
 
     run_id = args.run_id if args.run_id else _make_run_id()
@@ -53,8 +53,6 @@ def main() -> None:
 
     print(f"\nSubmitting pipeline run: {run_id}")
     print(f"  Template:          {pipeline_template_uri}")
-    print(f"  Training bucket:   {training_bucket}")
-    print(f"  Model bucket:      {model_bucket}")
     print(f"  GPU:               {'no (CPU only)' if args.cpu_only else 'yes (T4 Spot)'}")
 
     aiplatform.init(project=project, location=region)
