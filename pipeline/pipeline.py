@@ -314,6 +314,8 @@ def trigger_deploy(
 
 @dsl.pipeline(name="fish-id-training-pipeline")
 def fish_id_training_pipeline(
+    training_bucket: str,
+    model_bucket: str,
     run_id: str,
     project: str,
     region: str,
@@ -327,10 +329,6 @@ def fish_id_training_pipeline(
     patience: int = _CONFIG["patience"],
     cpu_only: bool = False,
 ) -> None:
-    # Bucket names always follow the project's standard naming convention — not configurable.
-    training_bucket = f"{project}-fish-id-training"
-    model_bucket = f"{project}-fish-id-models"
-
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
         cpu_train = (
             train_model(  # pylint: disable=no-member

@@ -45,7 +45,8 @@ def main() -> None:
     region = os.environ["GCP_REGION"]
     github_repo = os.environ["GITHUB_REPO"]
 
-    # Bucket name always follows the project's standard naming convention — not configurable.
+    # Bucket names always follow the project's standard naming convention — not configurable.
+    training_bucket = f"{project}-fish-id-training"
     model_bucket = f"{project}-fish-id-models"
 
     run_id = args.run_id if args.run_id else _make_run_id()
@@ -61,6 +62,8 @@ def main() -> None:
         template_path=pipeline_template_uri,
         pipeline_root=f"gs://{model_bucket}/pipeline-root",
         parameter_values={
+            "training_bucket": training_bucket,
+            "model_bucket": model_bucket,
             "run_id": run_id,
             "project": project,
             "region": region,
