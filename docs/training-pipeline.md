@@ -4,6 +4,11 @@
 
 ## Overview
 
+A training run is submitted automatically whenever the training container, `training/config.yaml`,
+the compiled pipeline definition, or the training dataset changes — see
+[Triggering a Training Run](#triggering-a-training-run). `scripts/trigger-training.py` is also
+callable directly for ad-hoc runs (`--cpu-only`, resuming a specific `--run-id`).
+
 ```
 scripts/trigger-training.py
   → submits Vertex AI PipelineJob
@@ -29,14 +34,14 @@ Each successful training run is evaluated against a held-out eval set; if it cle
 
 ## Training Container Build
 
-The training container is built by `.github/workflows/build-training-image.yml` on every push to `main` that touches `training/**` or `pipeline/**`, plus `workflow_dispatch` for ad-hoc rebuilds.
+The training container and pipeline template are built by `.github/workflows/train-pipeline.yml` on every push to `main` that touches `training/**` or `pipeline/**`, plus `workflow_dispatch` for ad-hoc rebuilds. A `training-trigger` concurrency group (no cancel-in-progress) serializes overlapping pushes so back-to-back changes queue instead of submitting concurrent training runs.
 
-The workflow:
-1. Builds `training/Dockerfile` (build context: repo root), tagged `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{SHA}`
-2. Pushes both `:{SHA}` and `:latest` tags to Artifact Registry
-3. Compiles `pipeline/pipeline.py` and uploads the compiled JSON to `gs://{PROJECT_ID}-fish-id-models/pipeline/fish-id-training-pipeline.json`
+The workflow, in order:
+1. **`build-and-push`** — Builds `training/Dockerfile` (build context: repo root), tagged `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{SHA}`; pushes both `:{SHA}` and `:latest` tags to Artifact Registry
+2. **`compile-and-upload`** — Compiles `pipeline/pipeline.py` (baking in `training/config.yaml` as the pipeline's default parameter values) and uploads the compiled JSON to `gs://{PROJECT_ID}-fish-id-models/pipeline/fish-id-training-pipeline.json`
+3. **`trigger-training`** — Runs `scripts/trigger-training.py` to submit a Vertex AI PipelineJob against the image and template built in the previous two jobs
 
-The compiled pipeline template must be current before triggering a run. Merging any change to `training/` or `pipeline/` keeps both in sync automatically.
+Because `training/config.yaml` is under `training/**`, any change to it recompiles the pipeline template (picking up the new defaults) before the training run is submitted — the container rebuild and the pipeline recompile always happen together, so a run never uses a stale template.
 
 ---
 
@@ -110,7 +115,16 @@ The `production` serving artifact is tracked via the Vertex AI Model Registry (`
 
 ## Triggering a Training Run
 
-**`scripts/trigger-training.py`** submits a Vertex AI PipelineJob using the pipeline template from GCS and the `:latest` training image from Artifact Registry:
+A run is submitted automatically on any of the following:
+
+| Trigger | Mechanism |
+|---|---|
+| Training container changes (`training/**`) | `train-pipeline.yml` — rebuilds the image, recompiles the pipeline, then submits a run |
+| `training/config.yaml` changes | Same as above — it's under `training/**`, so the pipeline recompile picks up the new defaults before the run is submitted |
+| Pipeline definition changes (`pipeline/**`) | Same `train-pipeline.yml` workflow (also matches this path) |
+| Training dataset syncs | `scripts/update-dataset.py` calls `scripts/trigger-training.py` after a successful sync |
+
+Both CI (`train-pipeline.yml`'s `trigger-training` job) and a dataset sync run **`scripts/trigger-training.py`** directly, which submits a Vertex AI PipelineJob using the pipeline template from GCS and the `:latest` training image from Artifact Registry. It's also callable manually for ad-hoc runs:
 
 ```bash
 export GCP_PROJECT_ID=your-project-id
@@ -252,7 +266,9 @@ echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --d
 | Vertex AI CustomJob `timeout: 7200s` | Runaway training cost |
 | `strategy=SPOT` on the default GPU (T4) job | Full on-demand GPU billing |
 | `--cpu-only` fallback (16 vCPU / 64G, no accelerator) | Training when GPU quota/Spot capacity is unavailable |
-| Manual trigger only | Accidental pipeline runs |
+| `training-trigger` concurrency group (`cancel-in-progress: false`) on `train-pipeline.yml` | Concurrent duplicate runs from back-to-back pushes touching `training/**`/`pipeline/**` |
+
+Training now fires automatically (see [Triggering a Training Run](#triggering-a-training-run)) on container/config/pipeline pushes and dataset syncs — there is no manual-approval gate before a run is submitted. The quality gate in `promote_model` still prevents a bad run from reaching production.
 
 **Recommended out-of-band**: a project-level GCP budget alert at `$50/month` — configure via Billing → Budgets & alerts.
 
@@ -260,5 +276,4 @@ echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --d
 
 ## Deferred
 
-- **Eventarc / Cloud Functions trigger** — pipeline is triggered manually only
 - **Multi-config support** — single `config.yaml` baked into the container

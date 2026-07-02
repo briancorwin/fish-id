@@ -209,7 +209,7 @@ Requires [Infrastructure Setup](#infrastructure-setup) to be completed first.
 
 ### 1. Build the training container
 
-The training container is built automatically by `.github/workflows/build-training-image.yml` whenever changes to `training/**` or `pipeline/**` are merged to `main`. It pushes both `:{SHA}` and `:latest` tags to Artifact Registry, and compiles the pipeline definition and uploads it to GCS.
+The training container is built automatically by `.github/workflows/train-pipeline.yml` whenever changes to `training/**` or `pipeline/**` are merged to `main`. It pushes both `:{SHA}` and `:latest` tags to Artifact Registry, compiles the pipeline definition and uploads it to GCS, then submits a Vertex AI training run — no manual step needed.
 
 Verify the build ran after your first merge:
 
