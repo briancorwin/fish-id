@@ -224,15 +224,14 @@ gcloud artifacts docker images list \
 Export from Roboflow and sync to the GCS training bucket (always `${GCP_PROJECT_ID}-fish-id-training`). A successful sync automatically submits a training run against the new data, so also set the variables `scripts/trigger-training.py` needs (`GCP_PROJECT_ID`, `GCP_REGION`, `GITHUB_REPO`):
 
 ```bash
-export ROBOFLOW_API_KEY=your_key_here
-export GCP_PROJECT_ID=your-project-id
+export ROBOFLOW_API_KEY=your-roboflow-api-key-here
+export ROBOFLOW_WORKSPACE=your-roboflow-workspace-here
+export ROBOFLOW_PROJECT=your-roboflow-project-here
+export GCP_PROJECT_ID=your-project-id-here
 export GCP_REGION=us-central1
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
-python scripts/update-dataset.py \
-  --roboflow-version ${ROBOFLOW_VERSION_NUMBER} \
-  --workspace ${ROBOFLOW_WORKSPACE} \
-  --project ${ROBOFLOW_PROJECT}
+python scripts/update-dataset.py --roboflow-version ${ROBOFLOW_VERSION_NUMBER}
 ```
 
 Pass `--no-trigger-training` to sync without submitting a training run (e.g. to sync several dataset versions before training on the final one).
@@ -242,7 +241,7 @@ Pass `--no-trigger-training` to sync without submitting a training run (e.g. to 
 Training is triggered automatically after step 1 (container/config/pipeline changes) and step 2 (dataset syncs). For an ad-hoc run — e.g. `--cpu-only`, or resuming a specific `--run-id` — call the same script directly:
 
 ```bash
-export GCP_PROJECT_ID=your-project-id
+export GCP_PROJECT_ID=your-project-id-here
 export GCP_REGION=us-central1
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 
@@ -327,5 +326,5 @@ source scripts/.venv/bin/activate
 | Script | Purpose |
 |---|---|
 | `deploy-app.sh` | Manual CLI deploy. Bakes a local `fish-id.onnx` into the app container, builds via Cloud Build, and deploys to Cloud Run. Use to deploy a model retrieved from the training pipeline. |
-| `update-dataset.py` | Exports a Roboflow dataset version in YOLO format and syncs images and labels to the GCS training bucket, then calls `trigger-training.py` to submit a training run (`--no-trigger-training` to skip). Requires `ROBOFLOW_API_KEY` plus everything `trigger-training.py` requires. |
+| `update-dataset.py` | Exports a Roboflow dataset version in YOLO format and syncs images and labels to the GCS training bucket, then calls `trigger-training.py` to submit a training run (`--no-trigger-training` to skip). Requires `ROBOFLOW_API_KEY`, `ROBOFLOW_WORKSPACE`, `ROBOFLOW_PROJECT` plus everything `trigger-training.py` requires. |
 | `trigger-training.py` | Submits a Vertex AI PipelineJob using the compiled pipeline template and training image from GCS. Requires `GCP_PROJECT_ID`, `GCP_REGION`, and `GITHUB_REPO` env vars. |

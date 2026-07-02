@@ -58,18 +58,17 @@ Because `training/config.yaml` is under `training/**`, any change to it recompil
 **`scripts/update-dataset.py`** exports from Roboflow and syncs to the GCS training bucket:
 
 ```bash
-export ROBOFLOW_API_KEY=your_key_here
+export ROBOFLOW_API_KEY=your-roboflow-api-key-here
+export ROBOFLOW_WORKSPACE=your-roboflow-workspace-here
+export ROBOFLOW_PROJECT=your-roboflow-project-here
 
 # Plus everything scripts/trigger-training.py needs (see below) — a successful sync
 # automatically submits a training run against the newly-synced data.
-export GCP_PROJECT_ID=your-project-id
+export GCP_PROJECT_ID=your-project-id-here
 export GCP_REGION=us-central1
 export GITHUB_REPO=owner/repo-name
 
-python scripts/update-dataset.py \
-    --roboflow-version 5 \
-    --workspace my-workspace \
-    --project fish-id
+python scripts/update-dataset.py --roboflow-version 5
 ```
 
 The training bucket is always `${GCP_PROJECT_ID}-fish-id-training` — not configurable.
@@ -133,7 +132,7 @@ A run is submitted automatically on any of the following:
 Both CI (`train-pipeline.yml`'s `trigger-training` job) and a dataset sync run **`scripts/trigger-training.py`** directly, which submits a Vertex AI PipelineJob using the pipeline template from GCS and the `:latest` training image from Artifact Registry. It's also callable manually for ad-hoc runs:
 
 ```bash
-export GCP_PROJECT_ID=your-project-id
+export GCP_PROJECT_ID=your-project-id-here
 export GCP_REGION=us-central1
 export GITHUB_REPO=owner/repo-name   # e.g. briancorwin/fish-id
 

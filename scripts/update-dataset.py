@@ -11,17 +11,16 @@ On success, automatically submits a Vertex AI training run for the new data via
 scripts/trigger-training.py (requires that script's environment variables to also be set).
 
 Usage:
-    python scripts/update-dataset.py \
-        --roboflow-version 5 \
-        --workspace my-workspace \
-        --project fish-id
+    python scripts/update-dataset.py --roboflow-version 5
 
 Pass --no-trigger-training to sync the dataset without submitting a training run.
 
 Environment variables:
-    GCP_PROJECT_ID     GCP project ID (required) — the training bucket is always
-                       {GCP_PROJECT_ID}-fish-id-training
-    ROBOFLOW_API_KEY   Roboflow API key (required)
+    GCP_PROJECT_ID       GCP project ID (required) — the training bucket is always
+                         {GCP_PROJECT_ID}-fish-id-training
+    ROBOFLOW_API_KEY     Roboflow API key (required)
+    ROBOFLOW_WORKSPACE   Roboflow workspace slug (required)
+    ROBOFLOW_PROJECT     Roboflow project slug (required)
 
     Plus everything else required by scripts/trigger-training.py (GCP_REGION, GITHUB_REPO)
     to submit the training run.
@@ -49,8 +48,6 @@ def main() -> None:
         description="Sync a Roboflow dataset version to the GCS training bucket."
     )
     parser.add_argument("--roboflow-version", required=True, type=int)
-    parser.add_argument("--workspace", required=True, help="Roboflow workspace slug")
-    parser.add_argument("--project", required=True, help="Roboflow project slug")
     parser.add_argument(
         "--trigger-training",
         action=argparse.BooleanOptionalAction,
@@ -63,6 +60,8 @@ def main() -> None:
     # Bucket name always follows the project's standard naming convention — not configurable.
     bucket = f"{os.environ['GCP_PROJECT_ID']}-fish-id-training"
     api_key = os.environ["ROBOFLOW_API_KEY"]
+    workspace = os.environ["ROBOFLOW_WORKSPACE"]
+    roboflow_project = os.environ["ROBOFLOW_PROJECT"]
 
     try:
         from roboflow import Roboflow  # pylint: disable=import-outside-toplevel
@@ -75,13 +74,13 @@ def main() -> None:
 
         # Step 1: Export from Roboflow in YOLO format
         print(
-            f"Step 1: Downloading Roboflow {args.workspace}/{args.project} "
+            f"Step 1: Downloading Roboflow {workspace}/{roboflow_project} "
             f"version {args.roboflow_version}..."
         )
         rf = Roboflow(api_key=api_key)
         (
-            rf.workspace(args.workspace)
-            .project(args.project)
+            rf.workspace(workspace)
+            .project(roboflow_project)
             .version(args.roboflow_version)
             .download("yolov8", location=str(tmp_path), overwrite=True)
         )
