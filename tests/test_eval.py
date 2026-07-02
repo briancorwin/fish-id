@@ -178,7 +178,9 @@ class TestLogToVertex:
         mock_aip.start_run.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch.object(eval_module, "aiplatform", mock_aip):
-            eval_module._log_to_vertex("my-project", "us-central1", "fish-id-eval", "run-1", SAMPLE_METRICS)
+            eval_module._log_to_vertex(
+                "my-project", "us-central1", "fish-id-eval", "run-1", 42, SAMPLE_METRICS
+            )
 
         mock_aip.init.assert_called_once()
         call_kwargs = mock_aip.init.call_args.kwargs
@@ -191,11 +193,22 @@ class TestLogToVertex:
         mock_aip.start_run.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch.object(eval_module, "aiplatform", mock_aip):
-            eval_module._log_to_vertex("p", "r", "exp", "run-1", SAMPLE_METRICS)
+            eval_module._log_to_vertex("p", "r", "exp", "run-1", 42, SAMPLE_METRICS)
 
         logged = mock_aip.log_metrics.call_args.args[0]
         assert "mAP50" in logged
         assert "mAP50_95" in logged
+
+    def test_logs_dataset_generation_param(self):
+        mock_aip = MagicMock()
+        mock_aip.start_run.return_value.__enter__ = MagicMock(return_value=None)
+        mock_aip.start_run.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(eval_module, "aiplatform", mock_aip):
+            eval_module._log_to_vertex("p", "r", "exp", "run-1", 42, SAMPLE_METRICS)
+
+        logged_params = mock_aip.log_params.call_args.args[0]
+        assert logged_params == {"dataset_generation": 42}
 
     def test_creates_run_rather_than_resuming(self):
         mock_aip = MagicMock()
@@ -203,8 +216,47 @@ class TestLogToVertex:
         mock_aip.start_run.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch.object(eval_module, "aiplatform", mock_aip):
-            eval_module._log_to_vertex("p", "r", "exp", "run-1", SAMPLE_METRICS)
+            eval_module._log_to_vertex("p", "r", "exp", "run-1", 42, SAMPLE_METRICS)
 
         args, kwargs = mock_aip.start_run.call_args
-        assert args[0] == "run-1"
+        assert args[0] == "run-1-gen42"
         assert kwargs.get("resume") is not True
+
+    def test_uses_run_id_and_dataset_generation_as_the_vertex_run_name(self):
+        mock_aip = MagicMock()
+        mock_aip.start_run.return_value.__enter__ = MagicMock(return_value=None)
+        mock_aip.start_run.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch.object(eval_module, "aiplatform", mock_aip):
+            eval_module._log_to_vertex("p", "r", "exp", "run-prod", 42, SAMPLE_METRICS)
+
+        args, _ = mock_aip.start_run.call_args
+        assert args[0] == "run-prod-gen42"
+
+
+# ---------------------------------------------------------------------------
+# _vertex_run_name
+# ---------------------------------------------------------------------------
+
+class TestVertexRunName:
+    def test_combines_run_id_and_dataset_generation(self):
+        assert eval_module._vertex_run_name("run-1", 42) == "run-1-gen42"
+
+    def test_same_run_id_different_generation_produces_different_names(self):
+        assert eval_module._vertex_run_name("run-1", 42) != eval_module._vertex_run_name("run-1", 43)
+
+
+# ---------------------------------------------------------------------------
+# _read_dataset_generation
+# ---------------------------------------------------------------------------
+
+class TestReadDatasetGeneration:
+    def test_returns_generation_after_reload(self):
+        blob = MagicMock()
+        blob.generation = 42
+        client = _make_client(_make_bucket(blob))
+
+        result = eval_module._read_dataset_generation(client, "my-bucket")
+
+        blob.reload.assert_called_once()
+        assert result == 42

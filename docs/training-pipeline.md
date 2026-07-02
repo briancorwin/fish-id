@@ -11,14 +11,22 @@ scripts/trigger-training.py
         ├─ train_model: Vertex AI CustomJob (GPU Spot T4 by default, or CPU-only branch via --cpu-only)
         │      Reads: gs://{PROJECT_ID}-fish-id-training/images/ + labels/ + data.yaml
         │      Writes: gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx + metadata.json
-        ├─ eval_model: KFP component (runs on the training image)
-        │      Reads: gs://{PROJECT_ID}-fish-id-training/images/eval/ + labels/eval/ + data.yaml
-        │             gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
-        │      Writes: mAP50 / mAP50-95 / precision / recall to a Vertex AI Experiments run
         ├─ register_model: Vertex AI Model Registry
         │      Registers artifact as "fish-id" with alias "latest"
-        ├─ promote_model: Vertex AI Model Registry
-        │      Gates on eval mAP50 vs the current "production" alias; tags "production" on pass
+        ├─ eval_latest_and_production_models: KFP component (runs on the training image)
+        │      Reads: gs://{PROJECT_ID}-fish-id-training/images/eval/ + labels/eval/ + data.yaml
+        │             gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/fish-id.onnx
+        │      Writes: mAP50 / mAP50-95 / precision / recall + dataset_generation to a Vertex AI
+        │             Experiments run named "{run_id}-gen{dataset_generation}". Also checks
+        │             whether the current "production" model already has a result at this
+        │             dataset_generation, and if not, re-evaluates its (already-trained) ONNX
+        │             artifact against the current eval set so a later comparison is apples-to-apples.
+        │             Takes the just-registered model_resource_name so it can resolve the base
+        │             model's "@production" alias directly, without its own model lookup. Runs
+        │             after register_model, so a model is always tagged "latest" even if eval
+        │             later fails — the "latest" alias simply won't have an eval result yet.
+        ├─ promote_model: KFP component (slim image — pure comparison, no eval work here)
+        │      Gates on eval mAP50 vs the current "production" alias, tags "production" on pass
         └─ trigger_deploy: GitHub API workflow_dispatch (only runs if the gate passes)
                Fires deploy.yml on main → Cloud Run redeploy with the new model
 ```
@@ -72,7 +80,7 @@ Also uploads a single `data.yaml` to the bucket root (class names + counts, no s
 ├── images/
 │   ├── train/
 │   ├── val/
-│   └── eval/            # held out for eval_model; only present if the Roboflow export has a test split
+│   └── eval/            # held out for eval_latest_and_production_models; only present if the Roboflow export has a test split
 └── labels/
     ├── train/           # YOLO .txt label files
     ├── val/
@@ -157,7 +165,7 @@ patience: 20
 | `region` | `us-central1` | Env var `GCP_REGION` |
 | `training_image` | `...fish-id-train:latest` | Artifact Registry `:latest` tag |
 | `github_repo` | `briancorwin/fish-id` | Env var `GITHUB_REPO` |
-| `vertex_experiment` | `fish-id-eval` | Env var `VERTEX_EXPERIMENT` — used by `eval_model` and `promote_model` |
+| `vertex_experiment` | `fish-id-eval` | Env var `VERTEX_EXPERIMENT` — used by `eval_latest_and_production_models` and `promote_model` |
 | `cpu_only` | `false` | `--cpu-only` flag (default: false) |
 | `model_name`, `epochs`, `imgsz`, `batch`, `optimizer`, `lr0`, `patience` | see above | Default from `training/config.yaml` at compile time |
 
@@ -169,21 +177,27 @@ patience: 20
 5. Build `metadata.json` (run_id, dataset_generation, container image tag, model architecture, training args, duration, GPU info, etc.)
 6. Upload `fish-id.onnx` and `metadata.json` to `gs://{MODEL_BUCKET}/runs/run-{R}/`
 
-**Eval Job (`eval_model` component, `training/eval.py`)** — runs after training, on the same training container image, but as a plain KFP step (not a CustomJob):
-1. Download `images/eval/` + `labels/eval/` and `data.yaml` from `{TRAINING_BUCKET}`
-2. Download `fish-id.onnx` for `run_id` from `{MODEL_BUCKET}`
-3. Run `YOLO(...).val(...)` against the eval split and compute `mAP50`, `mAP50_95`, `precision`, `recall`, and per-class `mAP50`
-4. Log the metrics to Vertex AI Experiments under `vertex_experiment`, as a run named `run_id` — this is what `promote_model` reads to decide whether to promote
-5. Raises if no eval images are found at `images/eval/` — the eval split must be synced via `update-dataset.py` before training (see [Dataset Management](#dataset-management))
-
 **`register_model` component:**
 - Registers `gs://{MODEL_BUCKET}/runs/{run_id}/` as the artifact URI in Vertex AI Model Registry
 - Display name: `"fish-id"`; version aliases: `"latest"`; `is_default_version=True`; `version_description=run_id`
 - If a `"fish-id"` model already exists, adds a new version (passes `parent_model`); otherwise creates the model
+- Returns `model_resource_name` — passed to both `eval_latest_and_production_models` and `promote_model` downstream
+
+**Eval Job (`eval_latest_and_production_models` component, `training/eval.py`)** — runs after registration, on the training container image, as a plain KFP step (not a CustomJob). Uses `set_retry(num_retries=3)` on both branches, same as `train_model`, to reduce the odds of a transient failure (GCS blip, Vertex AI API hiccup) leaving `"latest"` tagged with no eval result:
+1. Download `images/eval/` + `labels/eval/` and `data.yaml` from `{TRAINING_BUCKET}`
+2. Download `fish-id.onnx` for `run_id` from `{MODEL_BUCKET}`
+3. Read the eval dataset's GCS object generation from `data.yaml` (same `dataset_generation` concept as training)
+4. Run `YOLO(...).val(...)` against the eval split and compute `mAP50`, `mAP50_95`, `precision`, `recall`, and per-class `mAP50`
+5. Log `dataset_generation` as a param and the metrics to Vertex AI Experiments under `vertex_experiment`. The run is always named `{run_id}-gen{dataset_generation}` — this single naming rule (`eval._vertex_run_name()`) is used for every eval run, so a given model's eval result at a given dataset generation always resolves to the same, predictable name
+6. Raises if no eval images are found at `images/eval/` — the eval split must be synced via `update-dataset.py` before training (see [Dataset Management](#dataset-management))
+7. Derives the base model resource name from `model_resource_name` (strips `/versions/{N}`) and resolves its `@production` alias, if any. Checks Vertex AI Experiments for a run named `{prod_run_id}-gen{dataset_generation}`; if it's missing — the production model has never been evaluated against this dataset generation — re-runs steps 2–5 against the production model's already-trained ONNX artifact, so its mAP50 becomes comparable to the current run's before `promote_model` looks at either
+
+Since this runs after `register_model`, a model is always tagged `"latest"` even if eval fails afterward (e.g. a corrupted eval split) — the `"latest"` alias just won't have a Vertex Experiments result yet, and `promote_model` will fail its gate lookup and skip promotion in that case. This trade-off is intentional: `eval_latest_and_production_models` no longer needs its own `Model.list()` lookup to find the base model resource name — it derives it directly from `register_model`'s output.
 
 **`promote_model` component:**
 - Reads `run_id` from the `@latest` alias and `prod_run_id` from the `@production` alias
-- Gates promotion: queries Vertex AI Experiments for both run IDs; if current `mAP50 < prod mAP50 - 0.02`, skips promotion
+- Looks up `metric.mAP50` for `{latest_run_id}-gen{current_dataset_generation}` and `{prod_run_id}-gen{current_dataset_generation}` in Vertex AI Experiments — both are guaranteed to exist by this point because `eval_latest_and_production_models` re-evaluates production first if needed, so the comparison is always apples-to-apples on the same eval dataset (this is what fixes the trap where growing the eval set makes every new candidate look worse purely because the "production" number is stale)
+- Gates promotion: if current `mAP50 < prod mAP50 - 0.02`, skips promotion; also skips (fails safe) if either run's result can't be found
 - On gate pass (or no production model yet): tags the registered version as `"production"` via `MergeVersionAliasesRequest`
 
 **`trigger_deploy` component:**
@@ -195,7 +209,7 @@ patience: 20
 
 ## IAM
 
-There is no separate training service account — `train_model`, `eval_model`, `register_model`, and `promote_model` all run under the pipeline's own runtime SA (`fish-id-workflows-sa`), passed explicitly via `pipeline_job.submit(service_account=...)` in `trigger-training.py`.
+There is no separate training service account — `train_model`, `eval_latest_and_production_models`, `register_model`, and `promote_model` all run under the pipeline's own runtime SA (`fish-id-workflows-sa`), passed explicitly via `pipeline_job.submit(service_account=...)` in `trigger-training.py`.
 
 **`fish-id-workflows-sa`** (pipeline components):
 - `roles/aiplatform.user` on project (submit PipelineJobs and CustomJobs, register models)
