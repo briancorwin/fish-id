@@ -84,10 +84,11 @@ resource "google_storage_bucket_iam_member" "cicd_model_writer" {
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
-# CI/CD SA — list and read Vertex AI Model Registry to resolve production alias at deploy time
-resource "google_project_iam_member" "cicd_aiplatform_viewer" {
+# CI/CD SA — submit Vertex AI training pipeline runs (train-pipeline.yml) and read the Model
+# Registry to resolve the production alias at deploy time (aiplatform.user covers both)
+resource "google_project_iam_member" "cicd_aiplatform_user" {
   project = var.project_id
-  role    = "roles/aiplatform.viewer"
+  role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
@@ -124,6 +125,14 @@ resource "google_project_iam_member" "workflows_log_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"
   member  = "serviceAccount:${google_service_account.workflows.email}"
+}
+
+# CI/CD SA — attach the workflows SA as the pipeline's runtime service account when submitting a
+# run from train-pipeline.yml (aiplatform.PipelineJob.submit(service_account=...))
+resource "google_service_account_iam_member" "cicd_workflows_sa_user" {
+  service_account_id = google_service_account.workflows.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.cicd.email}"
 }
 
 # Secret holding the GitHub PAT used to trigger workflow_dispatch on deploy-api.yml

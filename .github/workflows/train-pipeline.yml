@@ -1,0 +1,120 @@
+name: Build training image, compile pipeline, and trigger training
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "training/**"
+      - "pipeline/**"
+  workflow_dispatch:
+
+# Serialize triggers so back-to-back pushes queue Vertex AI submissions instead of
+# firing concurrent (expensive, GPU) training runs for the same in-flight change.
+concurrency:
+  group: training-trigger
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ secrets.GCP_REGION }}
+
+jobs:
+  build-and-push:
+    name: Build & Push training image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build training image
+        run: |
+          IMAGE=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}
+          docker build \
+            -f training/Dockerfile \
+            --build-arg IMAGE_TAG=${IMAGE} \
+            -t ${IMAGE} \
+            .
+
+      - name: Push training image
+        run: |
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }}
+          docker tag \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:${{ github.sha }} \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:latest
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/fish-id/fish-id-train:latest
+
+  compile-and-upload:
+    name: Compile & Upload pipeline
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Compile and upload pipeline
+        run: |
+          pip install -r pipeline/requirements.txt
+          python pipeline/pipeline.py
+          gsutil cp pipeline/fish-id-training-pipeline.json \
+            gs://${{ env.GCP_PROJECT_ID }}-fish-id-models/pipeline/fish-id-training-pipeline.json
+
+  trigger-training:
+    name: Submit Vertex AI training run
+    needs: compile-and-upload
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TRAINING_BUCKET: ${{ secrets.GCP_PROJECT_ID }}-fish-id-training
+      MODEL_BUCKET: ${{ secrets.GCP_PROJECT_ID }}-fish-id-models
+      GITHUB_REPO: ${{ github.repository }}
+      VERTEX_EXPERIMENT: fish-id-experiment
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Submit training run
+        run: |
+          pip install -r scripts/requirements.txt
+          python scripts/trigger-training.py
