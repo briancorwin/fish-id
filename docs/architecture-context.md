@@ -6,9 +6,17 @@
 
 ```
 Browser (Firebase Hosting) → Cloud Run (Flask API + ONNX model)
+                                     │ (sync Pub/Sub publish)
+                                     ▼
+                          Pub/Sub topic: fish-id-analytics-events
+                                     │ (push subscription, OIDC auth)
+                                     ▼
+                     Cloud Run (analytics-consumer) → BigQuery + GCS
 ```
 
 YOLO model runs directly on Cloud Run CPU via ONNX export (~300–600ms per inference).
+Every detection also publishes an analytics event (see [docs/web-app.md](web-app.md#analytics-appanalyticspy-analytics-consumer)) —
+both Cloud Run services scale to zero and are billed per-invocation, so there's no always-on worker.
 
 ---
 
@@ -21,7 +29,12 @@ fish-id/
 │   ├── requirements.txt
 │   ├── main.py
 │   ├── fish_identifier.py
-│   └── rate_limiter.py
+│   ├── rate_limiter.py
+│   └── analytics.py            # publishes detection events to Pub/Sub
+├── analytics-consumer/         # Cloud Run service, pushed to via Pub/Sub
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── main.py                 # inserts into BigQuery, dedup-uploads images to GCS
 ├── frontend/                   # Firebase Hosting (static)
 │   ├── public/
 │   │   ├── index.html
@@ -52,12 +65,15 @@ fish-id/
 │   ├── iam.tf
 │   ├── storage.tf
 │   ├── artifact_registry.tf
+│   ├── pubsub.tf               # analytics topic + push subscription (bootstrap-gated, see below)
+│   ├── bigquery.tf             # analytics dataset + table
 │   └── .terraform.lock.hcl    # committed to pin provider versions
 ├── .github/
 │   ├── dependabot.yml
 │   └── workflows/
 │       ├── ci.yml                       # tests + lint on every PR
 │       ├── deploy.yml                   # backend + frontend deploy on merge to main
+│       ├── deploy-analytics-consumer.yml # builds + deploys analytics-consumer/ on its own path changes
 │       └── build-training-image.yml     # builds + pushes training container on training/** changes
 ├── scripts/
 │   ├── requirements.txt
@@ -69,6 +85,8 @@ fish-id/
 │   ├── helpers.py
 │   ├── requirements.txt
 │   ├── test_main.py
+│   ├── test_analytics.py
+│   ├── test_analytics_consumer.py
 │   ├── test_fish_identifier.py
 │   ├── test_rate_limiter.py
 │   ├── test_pipeline_components.py
@@ -79,6 +97,14 @@ fish-id/
 ```
 
 `fish-id.onnx` is not committed to the repo. In production it is stored in GCS and downloaded during CI/CD. For local builds, place it in `app/` before running `scripts/deploy-app.sh`.
+
+The Pub/Sub push subscription in `terraform/pubsub.tf` needs a two-phase
+`terraform apply`, the same manual-bootstrap pattern already used for the
+`terraform_state` GCS bucket and the GitHub deploy-token secret above: apply
+once with the default empty `analytics_consumer_url`, deploy
+`analytics-consumer` to obtain its Cloud Run URL, then re-apply with
+`-var="analytics_consumer_url=<url>"` to create the subscription. See
+`terraform/variables.tf` for details.
 
 ---
 
@@ -97,6 +123,8 @@ fish-id/
 | Pipeline orchestration | Vertex AI Pipelines (KFP v2) |
 | Model versioning + promotion | Vertex AI Model Registry |
 | GitHub PAT for deploy trigger | Secret Manager |
+| Async event delivery | Pub/Sub |
+| Analytics warehouse | BigQuery |
 
 ---
 

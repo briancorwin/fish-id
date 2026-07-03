@@ -17,7 +17,7 @@ Two separate Dependabot features should both be active:
 
 Enable both at **Settings → Code security → Dependabot**.
 
-A third feature, **Dependabot version updates**, is configured in `.github/dependabot.yml` to scan `app/requirements.txt` weekly and open PRs for outdated packages regardless of CVE status. This is separate from security updates.
+A third feature, **Dependabot version updates**, is configured in `.github/dependabot.yml` to scan `app/requirements.txt`, `analytics-consumer/requirements.txt`, and the other component requirements files weekly, and open PRs for outdated packages regardless of CVE status. This is separate from security updates.
 
 ### CodeQL
 
@@ -31,7 +31,7 @@ Three jobs run on every PR in parallel with tests and lint:
 
 ### `dependency-scan`
 
-Runs `pip-audit` against `app/requirements.txt`. Blocks merges that introduce or include dependencies with known CVEs. Complements Dependabot (which monitors the repo on a schedule) by providing a synchronous gate at PR time.
+Runs `pip-audit` against `app/requirements.txt` and `analytics-consumer/requirements.txt`. Blocks merges that introduce or include dependencies with known CVEs. Complements Dependabot (which monitors the repo on a schedule) by providing a synchronous gate at PR time.
 
 ### `secret-scan`
 
@@ -45,7 +45,7 @@ Both jobs are scoped to `permissions: contents: read` — no broader access is g
 
 ### Workload Identity Federation
 
-Both `deploy-api` and `deploy-frontend` jobs authenticate to GCP using **Workload Identity Federation (WIF)** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
+The `deploy-api`, `deploy-frontend`, and `deploy-analytics-consumer` jobs all authenticate to GCP using **Workload Identity Federation (WIF)** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
 
 WIF is configured to accept tokens only from this specific repository and only from the `main` branch. Feature branches cannot impersonate the CI/CD service account.
 
@@ -66,7 +66,7 @@ The following secrets are stored in GitHub and injected as environment variables
 
 ### Cloud Run Service Account
 
-The Cloud Run service account is assigned **no IAM roles**. The Flask API makes no GCP API calls, so no permissions are needed. This limits blast radius if the application is ever exploited.
+The Cloud Run service account is assigned a single IAM role: `roles/pubsub.publisher`, scoped to the `fish-id-analytics-events` topic (see [Analytics Security](#analytics-security) below) — the app's only GCP API call is publishing detection events. This limits blast radius if the application is ever exploited.
 
 ### Image Validation
 
@@ -79,6 +79,23 @@ Restricted to the Firebase Hosting origin (`https://PROJECT_ID.web.app`). The or
 ### Rate Limiting
 
 Per-IP token bucket (`app/rate_limiter.py`): 5 requests/minute per IP, burst of 3. Prevents a single caller from running up inference costs or abusing the API.
+
+---
+
+## Analytics Security
+
+### IAM Least Privilege
+
+`fish-id-analytics-consumer-sa` (the `analytics-consumer` Cloud Run service) is scoped to only what it needs to write analytics data:
+
+| Role | Scope |
+|---|---|
+| `roles/bigquery.dataEditor` | `fish_id_analytics` dataset only |
+| `roles/storage.objectAdmin` | Analytics images bucket only |
+
+### Authenticated Pub/Sub Push
+
+`analytics-consumer` is deployed with `--no-allow-unauthenticated` — it cannot be invoked by an arbitrary caller. The only permitted invoker is the Pub/Sub push subscription itself: Pub/Sub's service agent is granted `roles/iam.serviceAccountTokenCreator` on `fish-id-analytics-consumer-sa` (see `terraform/pubsub.tf`), letting it mint short-lived OIDC tokens impersonating that SA, which is in turn granted `roles/run.invoker` on the service. This keeps the analytics ingestion endpoint unreachable from the public internet.
 
 ---
 

@@ -39,6 +39,39 @@ Image validation on upload:
 
 ---
 
+## Analytics (`app/analytics.py`, `analytics-consumer/`)
+
+Every `/detect` request publishes one Pub/Sub event so results can be analyzed
+later in BigQuery, and low-confidence images are saved to GCS for review.
+
+- **Why synchronous**: Cloud Run only guarantees CPU allocation during active
+  request processing by default — a background thread started right before
+  returning a response risks being frozen before it finishes. So
+  `publish_detection_event()` is called synchronously, right before
+  `/detect`'s `return jsonify(...)`, using `future.result(timeout=5.0)`. It's
+  wrapped in try/except so a Pub/Sub outage never fails the user's request.
+- **Event fields**: `timestamp`, `image_hash` (SHA-256 of the raw uploaded
+  bytes), `fish_count`, `detections`, `low_confidence`, `image_stored`.
+- **Low-confidence trigger** (`LOW_CONFIDENCE_THRESHOLD = 0.5` in
+  `app/analytics.py`): any single detection with `confidence < 0.5`, or zero
+  detections at all. Only then does the image ride along in the same message,
+  base64-encoded as `image_b64` — this keeps the write path to one publish call.
+- **Consumer** (`analytics-consumer/`, a separate Cloud Run service, pushed to
+  via a Pub/Sub push subscription): inserts one row per event into BigQuery
+  (`fish_id_analytics.detection_events`), and if `image_b64` is present,
+  uploads to GCS keyed by `image_hash` — but only after checking `blob.exists()`
+  first, so re-uploads of the same bytes are a no-op (dedup is exact-byte SHA-256
+  match, not perceptual). A GCS failure degrades to `image_stored=False` without
+  losing the BigQuery row; only a BigQuery failure triggers a Pub/Sub retry.
+  Both Cloud Run services scale to zero and are billed per-invocation — no
+  always-on worker.
+- **Env vars**: `GCP_PROJECT_ID` (required for the main app to publish at all —
+  unset means the feature silently no-ops), `ANALYTICS_TOPIC_ID` (optional,
+  defaults to `fish-id-analytics-events`), and on the consumer: `BQ_DATASET`,
+  `BQ_TABLE`, `ANALYTICS_IMAGES_BUCKET`.
+
+---
+
 ## Frontend (`frontend/`)
 
 Static site on Firebase Hosting; talks to the Cloud Run API.
@@ -56,6 +89,8 @@ When deployed via GitHub Actions, the Cloud Run URL is injected into `frontend/p
 | `--max-instances 1` on Cloud Run | Horizontal scaling charges |
 | Per-IP token bucket (5 rpm) | Single user spamming |
 | 5MB image size limit | Large payload abuse |
+| `--max-instances 1` on analytics-consumer | Horizontal scaling charges |
+| 90-day GCS lifecycle rule on stored images | Unbounded storage growth |
 
 ---
 

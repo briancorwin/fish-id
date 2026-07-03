@@ -21,11 +21,21 @@ The `workflow_dispatch` trigger accepts an optional `run_id` input; when provide
 
 Runs on every PR (opened, synchronised, reopened). Three parallel jobs:
 
-1. **`test`** — installs `app/` and `tests/` deps, runs `pytest tests/ -v`, runs `pylint app/main.py app/rate_limiter.py` (fail threshold 7.0)
-2. **`dependency-scan`** — runs `pip-audit -r app/requirements.txt` to check for known CVEs
+1. **`test`** — installs deps for `app/`, `analytics-consumer/`, `training/`, `pipeline/`, `scripts/`, and `tests/`, runs `pytest tests/ -v`, runs `pylint app/ analytics-consumer/ training/ pipeline/ scripts/ tests/` (fail threshold 7.0), and runs `mypy` in two invocations (`app/main.py` and `analytics-consumer/main.py` share a filename, which mypy treats as a duplicate module across a single invocation)
+2. **`dependency-scan`** — runs `pip-audit` against `app/requirements.txt` and `analytics-consumer/requirements.txt` to check for known CVEs
 3. **`secret-scan`** — runs Gitleaks over the full git history to detect committed secrets
 
 PRs cannot merge if any job fails.
+
+---
+
+## Workflow: `.github/workflows/deploy-analytics-consumer.yml`
+
+Runs on push to `main` when files under `analytics-consumer/**` change, plus `workflow_dispatch` for ad-hoc redeploys. Authenticates via the same WIF / `fish-id-cicd-sa` pattern as `deploy-api`.
+
+Builds `analytics-consumer/Dockerfile`, pushes to the same `fish-id` Artifact Registry repo under the `analytics-consumer` image name, and deploys to Cloud Run as `fish-id-analytics-consumer` with `--max-instances 1` and `--no-allow-unauthenticated` (the only caller is the Pub/Sub push subscription's OIDC identity — see `terraform/pubsub.tf`).
+
+The very first deploy of this service is also the manual step needed to unblock the Pub/Sub push subscription's Terraform bootstrap (see [docs/architecture-context.md](architecture-context.md)).
 
 ---
 
