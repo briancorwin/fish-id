@@ -26,30 +26,30 @@ _VERTEX_EXPERIMENT = "fish-id-eval"
 
 
 @dsl.component(base_image=_TRAINING_IMAGE)
-def train_model(
+def train_model(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     run_id: str,
     training_bucket: str,
     model_bucket: str,
-    model_name: str,
     epochs: int,
     imgsz: int,
     batch: int,
     optimizer: str,
     lr0: float,
     patience: int,
+    dis: float,
 ) -> None:
     import train  # installed via PYTHONPATH=/app in the training image
     train.run(
         run_id=run_id,
         training_bucket=training_bucket,
         model_bucket=model_bucket,
-        model_name=model_name,
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
         optimizer=optimizer,
         lr0=lr0,
         patience=patience,
+        dis=dis,
     )
 
 
@@ -320,13 +320,13 @@ def fish_id_training_pipeline(
     project: str,
     region: str,
     github_repo: str,
-    model_name: str = _CONFIG["model"],
     epochs: int = _CONFIG["epochs"],
     imgsz: int = _CONFIG["imgsz"],
     batch: int = _CONFIG["batch"],
     optimizer: str = _CONFIG["optimizer"],
     lr0: float = _CONFIG["lr0"],
     patience: int = _CONFIG["patience"],
+    dis: float = _CONFIG["dis"],
     cpu_only: bool = False,
 ) -> None:
     with dsl.If(cpu_only == True):  # pylint: disable=singleton-comparison
@@ -335,7 +335,7 @@ def fish_id_training_pipeline(
                 run_id=run_id,
                 training_bucket=training_bucket,
                 model_bucket=model_bucket,
-                model_name=model_name,
+                dis=dis,
                 epochs=epochs,
                 imgsz=imgsz,
                 batch=batch,
@@ -377,7 +377,7 @@ def fish_id_training_pipeline(
                 run_id=run_id,
                 training_bucket=training_bucket,
                 model_bucket=model_bucket,
-                model_name=model_name,
+                dis=dis,
                 epochs=epochs,
                 imgsz=imgsz,
                 batch=batch,

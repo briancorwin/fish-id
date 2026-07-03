@@ -66,8 +66,9 @@ class TestTrainModel:
     def test_component_has_expected_inputs(self):
         inputs = train_model.component_spec.inputs
         expected = {
-            "run_id", "training_bucket", "model_bucket", "model_name",
+            "run_id", "training_bucket", "model_bucket",
             "epochs", "imgsz", "batch", "optimizer", "lr0", "patience",
+            "dis",
         }
         assert set(inputs.keys()) == expected
 

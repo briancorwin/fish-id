@@ -108,9 +108,11 @@ Also uploads a single `data.yaml` to the bucket root (class names + counts, no s
 │   └── fish-id-training-pipeline.json   # compiled KFP pipeline template
 └── runs/
     ├── run-2026-06-05-143000/
-    │   ├── fish-id.onnx
+    │   ├── fish-id.onnx                          # exported from the student (yolov8n) model
     │   ├── metadata.json
-    │   └── checkpoint/weights/last.pt   # per-epoch checkpoint; lets an interrupted run resume via --run-id
+    │   └── checkpoint/
+    │       ├── teacher/weights/{last,best}.pt    # last.pt per epoch; best.pt marks the teacher stage complete
+    │       └── student/weights/last.pt           # per-epoch checkpoint for the student stage
     └── ...
 ```
 
@@ -152,25 +154,27 @@ The pipeline branches on the `cpu_only` parameter:
 - **Default (GPU)**: `n1-standard-4` + 1x `NVIDIA_TESLA_T4`, `strategy=SPOT`, `restart_job_on_worker_restart=True` (via `create_custom_training_job_from_component`)
 - **`--cpu-only`**: same component run as a plain KFP step with custom resource requests — 16 vCPU / 64G memory, no accelerator
 - **Container image**: `:latest` tag in Artifact Registry (not overridable)
-- **Timeout**: `7200s` (2 hours)
+- **Timeout**: not overridden — `create_custom_training_job_from_component` defaults to `604800s` (7 days); the CPU-only branch (a plain KFP step) has no timeout at all. Training two models back-to-back (see below) roughly doubles wall-clock time versus a single-model run, but is well within this ceiling
 - **Retries**: `set_retry(num_retries=3)` on both branches
 - **Service account**: `fish-id-workflows-sa` (there is no separate training service account — training, eval, register, and promote all run under the pipeline's own SA)
 
-Both branches are resumable: if `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/checkpoint/weights/last.pt` exists for the given `run_id`, training resumes from it instead of starting fresh. A checkpoint is uploaded after every epoch. `--run-id <existing-id>` on `trigger-training.py` restarts an interrupted run from its last checkpoint.
+Both branches are resumable: if `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/checkpoint/{teacher,student}/weights/last.pt` exists for the given `run_id`, that stage resumes from it instead of starting fresh. A checkpoint is uploaded after every epoch. `--run-id <existing-id>` on `trigger-training.py` restarts an interrupted run from its last checkpoint.
+
+The teacher/student model architectures (`yolov8m.pt` / `yolov8n.pt`) are fixed constants in `train.py` (`_TEACHER_MODEL` / `_STUDENT_MODEL`), not config or pipeline parameters — they're expected to change rarely, and `training/Dockerfile` pre-downloads these exact weights into the image at build time to avoid runtime egress to ultralytics.com. The two files must be kept in sync if the architectures ever change.
 
 **`training/config.yaml`** — single training config baked into the container image, used as the pipeline's default parameter values:
 
 ```yaml
-model: yolov8n.pt
 epochs: 100
 imgsz: 640
 batch: 16
 optimizer: AdamW
 lr0: 0.001
 patience: 20
+dis: 1.0
 ```
 
-`patience` stops training early if `mAP50` hasn't improved for that many epochs, so 100 epochs is a ceiling, not a guaranteed runtime.
+`patience` stops training early if `mAP50` hasn't improved for that many epochs, so 100 epochs is a ceiling, not a guaranteed runtime. The same hyperparameters (`epochs`, `imgsz`, `batch`, `optimizer`, `lr0`, `patience`) are used for both the teacher and student training stages. `dis` is Ultralytics' distillation loss weight multiplier (passed straight through to `model.train(dis=...)`).
 
 **Pipeline parameters:**
 
@@ -181,17 +185,21 @@ patience: 20
 | `region` | `us-central1` | Env var `GCP_REGION` |
 | `github_repo` | `briancorwin/fish-id` | Env var `GITHUB_REPO` |
 | `cpu_only` | `false` | `--cpu-only` flag (default: false) |
-| `model_name`, `epochs`, `imgsz`, `batch`, `optimizer`, `lr0`, `patience` | see above | Default from `training/config.yaml` at compile time |
+| `epochs`, `imgsz`, `batch`, `optimizer`, `lr0`, `patience`, `dis` | see above | Default from `training/config.yaml` at compile time |
 
 The training/model bucket names (`{PROJECT_ID}-fish-id-training` / `{PROJECT_ID}-fish-id-models`) and the training container image (`{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:latest`) are not pipeline parameters — the pipeline derives them from `project`/`region` internally, so they always follow the standard naming convention and can't drift from it.
 
-**Training script behavior (`train.py`):**
+**Training script behavior (`train.py`) — teacher/student knowledge distillation:**
+
+The deployed model must stay small enough for CPU inference on Cloud Run (`yolov8n`), but a larger model (`yolov8m`) generally learns more accurate features. `train.py` gets the best of both by fine-tuning `yolov8m` (`_TEACHER_MODEL`) as a "teacher," then training `yolov8n` (`_STUDENT_MODEL`) as a "student" using Ultralytics' native knowledge-distillation support (`model.train(distill_model=..., dis=...)`), which adds a distillation loss term between the teacher's and student's outputs during training — no relabeling or separate inference pass required:
+
 1. Read the dataset generation from `{PROJECT_ID}-fish-id-training/data.yaml` (its GCS object generation becomes `dataset_generation` in the run's metadata)
 2. Download `data.yaml` + all `train`/`val` images and labels from `{PROJECT_ID}-fish-id-training` to `/app/data/`
-3. If `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/checkpoint/weights/last.pt` exists, resume from it; otherwise `YOLO(config["model"]).train(data=..., **params)` from scratch, uploading `weights/last.pt` to that checkpoint path after every epoch
-4. Export the best checkpoint to ONNX
-5. Build `metadata.json` (run_id, dataset_generation, container image tag, model architecture, training args, duration, GPU info, etc.)
-6. Upload `fish-id.onnx` and `metadata.json` to `gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/`
+3. **Teacher stage**: if `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/checkpoint/teacher/weights/best.pt` already exists, download it to a fixed local path (`/tmp/yolo-checkpoint/teacher-best.pt`) and skip straight to step 4. Otherwise train `_TEACHER_MODEL` (`yolov8m.pt`) on the training data — resuming from `checkpoint/teacher/weights/last.pt` if present — upload the finished `best.pt` to that GCS path once done, and copy it to the same fixed local path
+4. **Student stage**: train `_STUDENT_MODEL` (`yolov8n.pt`) with `distill_model=<fixed local teacher best.pt path>` and `dis=<distillation loss weight>`, resuming from `checkpoint/student/weights/last.pt` if present. The fixed local path matters for resumability: if the student stage is interrupted and resumes in a new container, Ultralytics re-reads `distill_model` from the resumed run's own saved args rather than a value passed again, so the teacher weights must exist at that same path — which is why the teacher stage always re-downloads to it even when reusing an already-trained teacher
+5. Export the student's best checkpoint to standard FP32 ONNX (`model.export(format="onnx")`)
+6. Build `metadata.json` (run_id, dataset_generation, container image tag, student/teacher model architecture, distillation loss weight, training args, per-stage duration/epochs-completed/final-train-loss for both the teacher and student, GPU info, etc.) — teacher stats are `null` when the teacher stage was skipped because an already-trained checkpoint was reused
+7. Upload `fish-id.onnx` and `metadata.json` to `gs://{PROJECT_ID}-fish-id-models/runs/run-{R}/`
 
 **`register_model` component:**
 - Registers `gs://{PROJECT_ID}-fish-id-models/runs/{run_id}/` as the artifact URI in Vertex AI Model Registry
@@ -268,7 +276,6 @@ echo -n "YOUR_PAT" | gcloud secrets versions add fish-id-github-deploy-token --d
 
 | Control | What it prevents |
 |---|---|
-| Vertex AI CustomJob `timeout: 7200s` | Runaway training cost |
 | `strategy=SPOT` on the default GPU (T4) job | Full on-demand GPU billing |
 | `--cpu-only` fallback (16 vCPU / 64G, no accelerator) | Training when GPU quota/Spot capacity is unavailable |
 | `training-trigger` concurrency group (`cancel-in-progress: false`) on `train-pipeline.yml` | Concurrent duplicate runs from back-to-back pushes touching `training/**`/`pipeline/**` |
