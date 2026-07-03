@@ -8,8 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY training/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Pre-download base weights to avoid runtime egress to ultralytics.com
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+# Pre-download base weights (student + teacher) to avoid runtime egress to ultralytics.com.
+# Must match _STUDENT_MODEL / _TEACHER_MODEL in train.py — update both together.
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt'); YOLO('yolov8m.pt')"
 
 ARG IMAGE_TAG=unknown
 RUN echo "${IMAGE_TAG}" > /app/image_tag.txt
