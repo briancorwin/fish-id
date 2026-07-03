@@ -53,7 +53,7 @@ gcloud artifacts repositories create fish-id \
 
 ### 3. Create a service account for Cloud Run
 
-The service account is granted no roles — the app makes no GCP API calls.
+The service account is granted `roles/pubsub.publisher` on the analytics topic (see `terraform/pubsub.tf`) — the app's only GCP API call is publishing detection events.
 
 ```bash
 gcloud iam service-accounts create fish-id-cloud-run-sa \
@@ -163,6 +163,26 @@ echo -n "YOUR_GITHUB_PAT" | gcloud secrets versions add fish-id-github-deploy-to
   --data-file=- \
   --project=${GCP_PROJECT_ID}
 ```
+
+### 5. Finish the analytics bootstrap (two-phase apply)
+
+The Pub/Sub push subscription in `terraform/pubsub.tf` needs the `analytics-consumer` Cloud Run service's URL, which doesn't exist until that service is deployed once — so the first `terraform apply` above (step 2) intentionally skips creating the subscription (`analytics_consumer_url` defaults to `""`).
+
+1. Deploy `analytics-consumer` once — merge a PR touching `analytics-consumer/**` (triggers `.github/workflows/deploy-analytics-consumer.yml`), or run it manually the same way as `scripts/deploy-app.sh`.
+2. Get its URL:
+   ```bash
+   gcloud run services describe fish-id-analytics-consumer \
+     --region=${GCP_REGION} --project=${GCP_PROJECT_ID} \
+     --format='value(status.url)'
+   ```
+3. Re-apply with that URL to create the push subscription and its Cloud Run invoker binding:
+   ```bash
+   terraform apply \
+     -var="project_id=${GCP_PROJECT_ID}" \
+     -var="region=${GCP_REGION}" \
+     -var="github_repo=${GITHUB_REPO}" \
+     -var="analytics_consumer_url=<url from step 2>"
+   ```
 
 ---
 
@@ -275,7 +295,7 @@ source .venv/bin/activate
 python3 app/main.py
 ```
 
-The API is available at `http://localhost:8080`.
+The API is available at `http://localhost:8080`. `GCP_PROJECT_ID` is unset by default in local dev, so the analytics event publish (see [docs/web-app.md](docs/web-app.md#analytics-appanalyticspy-analytics-consumer)) silently no-ops — no GCP credentials are needed to run locally.
 
 ```bash
 # Health check
