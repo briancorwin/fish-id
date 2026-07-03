@@ -41,7 +41,7 @@ Both jobs are scoped to `permissions: contents: read` — no broader access is g
 
 ---
 
-## CI/CD Security (`.github/workflows/deploy.yml`)
+## CI/CD Security (`.github/workflows/deploy-api.yml`, `deploy-frontend.yml`, `deploy-analytics-consumer.yml`)
 
 ### Workload Identity Federation
 
@@ -112,11 +112,11 @@ Each service account in the training pipeline is scoped to only the permissions 
 | | `roles/secretmanager.secretAccessor` | `fish-id-github-deploy-token` secret only |
 | | `roles/aiplatform.user` + `roles/logging.logWriter` | Project |
 | `fish-id-cicd-sa` (GitHub Actions) | `roles/storage.objectAdmin` | Models bucket |
-| | `roles/aiplatform.viewer` | Project (list Model Registry versions to resolve `production` alias at deploy time) |
+| | `roles/aiplatform.user` | Project (list Model Registry versions to resolve `production` alias at deploy time, and submit Vertex AI pipeline runs from `train-pipeline.yml`) |
 
 ### Secret Manager
 
-The GitHub PAT used to trigger `workflow_dispatch` on `deploy.yml` after each successful model registration is stored in **Secret Manager** (`fish-id-github-deploy-token`) and read by the `trigger_deploy` pipeline component at runtime via the Secret Manager API. It is never written to source code, environment variables, or GitHub secrets.
+The GitHub PAT used to trigger `workflow_dispatch` on `deploy-api.yml` after each successful model registration is stored in **Secret Manager** (`fish-id-github-deploy-token`) and read by the `trigger_deploy` pipeline component at runtime via the Secret Manager API. It is never written to source code, environment variables, or GitHub secrets.
 
 ### Roboflow API Key
 

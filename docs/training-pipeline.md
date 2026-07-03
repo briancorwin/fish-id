@@ -33,7 +33,7 @@ scripts/trigger-training.py
         ├─ promote_model: KFP component (slim image — pure comparison, no eval work here)
         │      Gates on eval mAP50 vs the current "production" alias, tags "production" on pass
         └─ trigger_deploy: GitHub API workflow_dispatch (only runs if the gate passes)
-               Fires deploy.yml on main → Cloud Run redeploy with the new model
+               Fires deploy-api.yml on main → Cloud Run redeploy with the new model
 ```
 
 Each successful training run is evaluated against a held-out eval set; if it clears the quality gate it is registered, promoted, and triggers a production deploy automatically. Manual retrieval and `deploy-app.sh` are only needed for out-of-band deploys.
@@ -226,7 +226,7 @@ Since this runs after `register_model`, a model is always tagged `"latest"` even
 
 **`trigger_deploy` component:**
 - Reads the GitHub PAT from Secret Manager secret `fish-id-github-deploy-token`
-- POSTs a `workflow_dispatch` event to `deploy.yml` on `main` via the GitHub API
+- POSTs a `workflow_dispatch` event to `deploy-api.yml` on `main` via the GitHub API
 - The deploy workflow then pulls the `production`-aliased model from Vertex AI Registry and redeploys Cloud Run
 
 ---

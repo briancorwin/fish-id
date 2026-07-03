@@ -270,7 +270,7 @@ python scripts/trigger-training.py
 
 Use `--cpu-only` to skip the GPU accelerator.
 
-The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. After training, the pipeline evaluates the model against a held-out eval set; if it clears the quality gate against the current production model, it's registered in Vertex AI Model Registry with a `production` alias and `deploy.yml` is triggered automatically to redeploy Cloud Run with the new model. See [docs/training-pipeline.md](docs/training-pipeline.md) for the full flow.
+The run appears in the Cloud Console under **Vertex AI → Pipelines → Runs**. After training, the pipeline evaluates the model against a held-out eval set; if it clears the quality gate against the current production model, it's registered in Vertex AI Model Registry with a `production` alias and `deploy-api.yml` is triggered automatically to redeploy Cloud Run with the new model. See [docs/training-pipeline.md](docs/training-pipeline.md) for the full flow.
 
 ---
 

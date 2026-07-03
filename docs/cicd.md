@@ -4,16 +4,19 @@ GitHub Actions handles all deploys on merge to `main`. Manual CLI deployment via
 
 ---
 
-## Workflow: `.github/workflows/deploy.yml`
+## Workflow: `.github/workflows/deploy-api.yml`
 
-Two jobs run sequentially on push to `main` **or** on `workflow_dispatch` (which the training pipeline fires automatically after each successful model registration):
+Runs on push to `main` when files under `app/**` change, **or** on `workflow_dispatch` (which the training pipeline fires automatically after each successful model registration): resolves the `production`-aliased version in Vertex AI Model Registry, downloads `fish-id.onnx` from its GCS artifact URI, builds the Docker image, pushes to Artifact Registry, and deploys to Cloud Run.
 
-1. **`deploy-api`** — resolves the `production`-aliased version in Vertex AI Model Registry, downloads `fish-id.onnx` from its GCS artifact URI, builds the Docker image, pushes to Artifact Registry, deploys to Cloud Run
-2. **`deploy-frontend`** — fetches the Cloud Run URL, injects it into `app.js`, deploys `frontend/` to Firebase Hosting
-
-Both jobs authenticate using **Workload Identity Federation** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
+Authenticates using **Workload Identity Federation** — no long-lived service account keys are stored anywhere. GitHub Actions receives a short-lived OIDC token that is exchanged for GCP credentials scoped to the `fish-id-cicd-sa` service account.
 
 The `workflow_dispatch` trigger accepts an optional `run_id` input; when provided by the training pipeline, it is used as a Cloud Run revision suffix for traceability.
+
+---
+
+## Workflow: `.github/workflows/deploy-frontend.yml`
+
+Runs on push to `main` when files under `frontend/**` change, **or** on `workflow_dispatch`. Fetches the Cloud Run API URL, injects it into `frontend/public/js/app.js` and the project ID into `frontend/.firebaserc`, then deploys `frontend/` to Firebase Hosting. Authenticates via the same WIF / `fish-id-cicd-sa` pattern as `deploy-api`.
 
 ---
 
@@ -39,16 +42,15 @@ The very first deploy of this service is also the manual step needed to unblock 
 
 ---
 
-## Workflow: `.github/workflows/build-training-image.yml`
+## Workflow: `.github/workflows/train-pipeline.yml`
 
-Runs on push to `main` when files under `training/**` or `pipeline/**` change, plus `workflow_dispatch` for ad-hoc rebuilds. Authenticates via the same WIF / `fish-id-cicd-sa` pattern.
+Runs on push to `main` when files under `training/**` or `pipeline/**` change, plus `workflow_dispatch` for ad-hoc reruns. Authenticates via the same WIF / `fish-id-cicd-sa` pattern. Runs use a `concurrency` group so back-to-back pushes queue rather than firing concurrent (expensive, GPU) training runs. Three sequential jobs:
 
-Steps:
-1. Build `training/Dockerfile` (build context: repo root) tagged `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{SHA}`
-2. Push both `:{SHA}` and `:latest` tags to Artifact Registry
-3. Compile `pipeline/pipeline.py` and upload the compiled JSON to `gs://{PROJECT_ID}-fish-id-models/pipeline/fish-id-training-pipeline.json` — this is the template URI that `scripts/trigger-training.py` passes when submitting a PipelineJob
+1. **`build-and-push`** — builds `training/Dockerfile` (build context: repo root) tagged `{REGION}-docker.pkg.dev/{PROJECT_ID}/fish-id/fish-id-train:{SHA}`, pushes both `:{SHA}` and `:latest` tags to Artifact Registry
+2. **`compile-and-upload`** — compiles `pipeline/pipeline.py` and uploads the compiled JSON to `gs://{PROJECT_ID}-fish-id-models/pipeline/fish-id-training-pipeline.json` — this is the template URI that `scripts/trigger-training.py` passes when submitting a PipelineJob
+3. **`trigger-training`** — submits a Vertex AI PipelineJob via `scripts/trigger-training.py`
 
-The compiled pipeline template must be current before a training run is triggered. Merging any change to `training/` or `pipeline/` automatically keeps both in sync.
+Merging any change to `training/` or `pipeline/` automatically keeps the image, the compiled pipeline template, and a triggered training run all in sync — no manual step needed.
 
 ---
 

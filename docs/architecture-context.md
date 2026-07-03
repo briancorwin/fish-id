@@ -72,9 +72,10 @@ fish-id/
 │   ├── dependabot.yml
 │   └── workflows/
 │       ├── ci.yml                       # tests + lint on every PR
-│       ├── deploy.yml                   # backend + frontend deploy on merge to main
+│       ├── deploy-api.yml               # backend deploy on app/** changes
+│       ├── deploy-frontend.yml          # frontend deploy on frontend/** changes
 │       ├── deploy-analytics-consumer.yml # builds + deploys analytics-consumer/ on its own path changes
-│       └── build-training-image.yml     # builds + pushes training container on training/** changes
+│       └── train-pipeline.yml           # builds training image + compiles pipeline + triggers a run on training/**, pipeline/** changes
 ├── scripts/
 │   ├── requirements.txt
 │   ├── deploy-app.sh           # manual CLI build: copies fish-id.onnx into app/, builds container, cleans up
@@ -136,7 +137,7 @@ See **[docs/web-app.md](web-app.md)** for the full reference: API endpoints, YOL
 
 ## CI/CD
 
-See **[docs/cicd.md](cicd.md)** for the full reference: all three workflows (`ci.yml`, `deploy.yml`, `build-training-image.yml`) and required GitHub secrets.
+See **[docs/cicd.md](cicd.md)** for the full reference: all workflows (`ci.yml`, `deploy-api.yml`, `deploy-frontend.yml`, `deploy-analytics-consumer.yml`, `train-pipeline.yml`) and required GitHub secrets.
 
 ---
 
