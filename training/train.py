@@ -108,7 +108,7 @@ def _train_model(  # pylint: disable=too-many-arguments,too-many-positional-argu
             model_name, hyperparams["epochs"], hyperparams["imgsz"], hyperparams["batch"],
             hyperparams["optimizer"], hyperparams["lr0"], hyperparams["patience"], workers,
         )
-        distill_kwargs = {}
+        distill_kwargs: dict[str, str | float] = {}
         if distill_model is not None:
             distill_kwargs["distill_model"] = distill_model
         if dis is not None:
