@@ -80,6 +80,6 @@ jobs:
             --concurrency 5 \
             --max-instances 1 \
             --service-account fish-id-cloud-run-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
-            --set-env-vars CORS_ORIGIN=https://${{ secrets.GCP_PROJECT_ID }}.web.app \
+            --set-env-vars "CORS_ORIGIN=https://${{ secrets.GCP_PROJECT_ID }}.web.app,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}" \
             --allow-unauthenticated \
             $REVISION_SUFFIX_FLAG

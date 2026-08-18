@@ -55,20 +55,24 @@ later in BigQuery, and low-confidence images are saved to GCS for review.
 - **Low-confidence trigger** (`LOW_CONFIDENCE_THRESHOLD = 0.5` in
   `app/analytics.py`): any single detection with `confidence < 0.5`, or zero
   detections at all. Only then does the image ride along in the same message,
-  base64-encoded as `image_b64` — this keeps the write path to one publish call.
+  base64-encoded as `image_b64`, alongside its `image_content_type` (e.g.
+  `image/jpeg`) — this keeps the write path to one publish call.
 - **Consumer** (`analytics-consumer/`, a separate Cloud Run service, pushed to
   via a Pub/Sub push subscription): inserts one row per event into BigQuery
   (`fish_id_analytics.detection_events`), and if `image_b64` is present,
-  uploads to GCS keyed by `image_hash` — but only after checking `blob.exists()`
-  first, so re-uploads of the same bytes are a no-op (dedup is exact-byte SHA-256
-  match, not perceptual). A GCS failure degrades to `image_stored=False` without
-  losing the BigQuery row; only a BigQuery failure triggers a Pub/Sub retry.
-  Both Cloud Run services scale to zero and are billed per-invocation — no
-  always-on worker.
+  uploads to GCS keyed by `image_hash` with the GCS object's `content_type` set
+  from `image_content_type` — but only after checking `blob.exists()` first, so
+  re-uploads of the same bytes are a no-op (dedup is exact-byte SHA-256 match,
+  not perceptual). `image_content_type` comes from the magic-byte check
+  `app/main.py` already performs to validate the upload, rather than trusting
+  the client's `Content-Type` header or re-sniffing bytes in the consumer.
+  A GCS failure degrades to `image_stored=False` without losing the BigQuery
+  row; only a BigQuery failure triggers a Pub/Sub retry. Both Cloud Run
+  services scale to zero and are billed per-invocation — no always-on worker.
 - **Env vars**: `GCP_PROJECT_ID` (required for the main app to publish at all —
   unset means the feature silently no-ops), `ANALYTICS_TOPIC_ID` (optional,
   defaults to `fish-id-analytics-events`), and on the consumer: `BQ_DATASET`,
-  `BQ_TABLE`, `ANALYTICS_IMAGES_BUCKET`.
+  `BQ_TABLE`, `REVIEW_IMAGES_BUCKET`.
 
 ---
 

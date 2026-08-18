@@ -151,7 +151,6 @@ Retrieve the values needed for GitHub secrets:
 ```bash
 terraform output workload_identity_provider
 terraform output cicd_service_account_email
-terraform output model_bucket_name
 ```
 
 ### 4. Populate the GitHub deploy token secret

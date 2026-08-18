@@ -7,35 +7,35 @@ from helpers import make_jpeg, make_onnx_output
 
 
 # ---------------------------------------------------------------------------
-# Unit tests — _is_valid_image
+# Unit tests — _detect_image_content_type
 # ---------------------------------------------------------------------------
 
-class TestIsValidImage:
+class TestDetectImageContentType:
     def test_valid_jpeg(self):
-        assert main._is_valid_image(b"\xff\xd8\xff\xe0" + b"\x00" * 20) is True
+        assert main._detect_image_content_type(b"\xff\xd8\xff\xe0" + b"\x00" * 20) == "image/jpeg"
 
     def test_valid_png(self):
-        assert main._is_valid_image(b"\x89PNG\r\n\x1a\n" + b"\x00" * 20) is True
+        assert main._detect_image_content_type(b"\x89PNG\r\n\x1a\n" + b"\x00" * 20) == "image/png"
 
     def test_valid_gif87a(self):
-        assert main._is_valid_image(b"GIF87a" + b"\x00" * 20) is True
+        assert main._detect_image_content_type(b"GIF87a" + b"\x00" * 20) == "image/gif"
 
     def test_valid_gif89a(self):
-        assert main._is_valid_image(b"GIF89a" + b"\x00" * 20) is True
+        assert main._detect_image_content_type(b"GIF89a" + b"\x00" * 20) == "image/gif"
 
     def test_valid_webp(self):
         data = b"RIFF" + b"\x00" * 4 + b"WEBP" + b"\x00" * 20
-        assert main._is_valid_image(data) is True
+        assert main._detect_image_content_type(data) == "image/webp"
 
     def test_riff_non_webp_rejected(self):
         data = b"RIFF" + b"\x00" * 4 + b"AVI " + b"\x00" * 20
-        assert main._is_valid_image(data) is False
+        assert main._detect_image_content_type(data) is None
 
     def test_random_bytes_rejected(self):
-        assert main._is_valid_image(b"\x00\x01\x02\x03" * 10) is False
+        assert main._detect_image_content_type(b"\x00\x01\x02\x03" * 10) is None
 
     def test_empty_bytes_rejected(self):
-        assert main._is_valid_image(b"") is False
+        assert main._detect_image_content_type(b"") is None
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +102,42 @@ class TestDetectEndpoint:
         assert resp.status_code == 200
         assert resp.get_json()["detections"][0]["box"] == {"x1": 100, "y1": 200, "x2": 200, "y2": 400}
 
+    def test_publishes_analytics_event_on_success(self, client, mock_session):
+        mock_session.run.return_value = [make_onnx_output([
+            {"x1": 75, "y1": 75, "x2": 125, "y2": 125, "conf": 0.9, "class_id": 0},
+        ])]
+        with patch('main.publish_detection_event') as mock_publish:
+            resp = client.post("/detect",
+                               data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
+                               content_type="multipart/form-data")
+        assert resp.status_code == 200
+        mock_publish.assert_called_once()
+        image_bytes, detections, content_type = mock_publish.call_args[0]
+        assert isinstance(image_bytes, bytes)
+        assert detections == resp.get_json()["detections"]
+        assert content_type == "image/jpeg"
+
+    def test_does_not_publish_on_missing_image(self, client):
+        with patch('main.publish_detection_event') as mock_publish:
+            client.post("/detect")
+        mock_publish.assert_not_called()
+
+    def test_does_not_publish_on_invalid_image(self, client):
+        bad = io.BytesIO(b"\x00\x01\x02\x03" * 100)
+        with patch('main.publish_detection_event') as mock_publish:
+            client.post("/detect",
+                        data={"image": (bad, "file.jpg")},
+                        content_type="multipart/form-data")
+        mock_publish.assert_not_called()
+
+    def test_does_not_publish_on_model_error(self, client, mock_session):
+        mock_session.run.side_effect = RuntimeError("ONNX inference error")
+        with patch('main.publish_detection_event') as mock_publish:
+            client.post("/detect",
+                        data={"image": (io.BytesIO(make_jpeg(640, 640)), "fish.jpg")},
+                        content_type="multipart/form-data")
+        mock_publish.assert_not_called()
+
     def test_missing_image_returns_400(self, client):
         resp = client.post("/detect")
         assert resp.status_code == 400
@@ -124,7 +160,7 @@ class TestDetectEndpoint:
         assert "Invalid image format" in resp.get_json()["error"]
 
     def test_corrupt_image_returns_400(self, client):
-        # Valid JPEG magic bytes but truncated body — passes _is_valid_image, fails cv2.imdecode
+        # Valid JPEG magic bytes but truncated body — passes _detect_image_content_type, fails cv2.imdecode
         corrupt = io.BytesIO(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
         resp = client.post("/detect",
                            data={"image": (corrupt, "corrupt.jpg")},

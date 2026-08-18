@@ -6,6 +6,11 @@ updates:
       interval: "weekly"
 
   - package-ecosystem: "pip"
+    directory: "analytics-consumer/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
     directory: "pipeline/"
     schedule:
       interval: "weekly"

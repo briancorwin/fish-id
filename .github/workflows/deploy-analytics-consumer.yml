@@ -1,0 +1,48 @@
+name: Deploy Analytics Consumer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "analytics-consumer/**"
+  workflow_dispatch:
+
+jobs:
+  deploy-analytics-consumer:
+    name: Build & Deploy Cloud Run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/analytics-consumer:${{ github.sha }} analytics-consumer/
+          docker push ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/analytics-consumer:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy fish-id-analytics-consumer \
+            --image ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/fish-id/analytics-consumer:${{ github.sha }} \
+            --region ${{ secrets.GCP_REGION }} \
+            --memory 512Mi \
+            --cpu 1 \
+            --max-instances 1 \
+            --service-account fish-id-analytics-consumer-sa@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-env-vars "BQ_DATASET=fish_id_analytics,BQ_TABLE=detection_events,REVIEW_IMAGES_BUCKET=${{ secrets.GCP_PROJECT_ID }}-fish-id-review-images" \
+            --no-allow-unauthenticated

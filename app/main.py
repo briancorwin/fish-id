@@ -7,6 +7,7 @@ from flask_cors import CORS
 
 from rate_limiter import rate_limit
 from fish_identifier import FishIdentifier
+from analytics import publish_detection_event
 
 logger = logging.getLogger(__name__)
 
@@ -15,26 +16,25 @@ CORS(app, resources={r"/*": {"origins": os.environ.get("CORS_ORIGIN", "*")}})
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
-# Valid image magic bytes: (header, optional extra check at offset 8)
+# Valid image magic bytes: (header, optional extra check at offset 8, MIME type)
 _IMAGE_MAGIC = [
-    (b"\xff\xd8\xff", None),       # JPEG
-    (b"\x89PNG\r\n\x1a\n", None),  # PNG
-    (b"GIF87a", None),             # GIF
-    (b"GIF89a", None),             # GIF
-    (b"RIFF", b"WEBP"),            # WEBP
+    (b"\xff\xd8\xff", None, "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", None, "image/png"),
+    (b"GIF87a", None, "image/gif"),
+    (b"GIF89a", None, "image/gif"),
+    (b"RIFF", b"WEBP", "image/webp"),
 ]
 
 _MODEL_PATH = os.path.join(os.path.dirname(__file__), "fish-id.onnx")
 _identifier: FishIdentifier | None = None  # pylint: disable=invalid-name
 
 
-def _is_valid_image(data: bytes) -> bool:
-    for magic, extra in _IMAGE_MAGIC:
+def _detect_image_content_type(data: bytes) -> str | None:
+    for magic, extra, content_type in _IMAGE_MAGIC:
         if data[: len(magic)] == magic:
-            if extra is None:
-                return True
-            return data[8 : 8 + len(extra)] == extra
-    return False
+            if extra is None or data[8 : 8 + len(extra)] == extra:
+                return content_type
+    return None
 
 
 def _load_model():
@@ -76,7 +76,8 @@ def detect():
     if len(image_bytes) > MAX_IMAGE_BYTES:
         return jsonify({"error": "Image must be under 5MB"}), 400
 
-    if not _is_valid_image(image_bytes):
+    content_type = _detect_image_content_type(image_bytes)
+    if content_type is None:
         return jsonify({"error": "Invalid image format. Supported: JPEG, PNG, GIF, WEBP"}), 400
 
     nparr = np.frombuffer(image_bytes, np.uint8)
@@ -95,6 +96,8 @@ def detect():
     except RuntimeError as e:
         logger.error("Model inference failed: %s", e)
         return jsonify({"error": "Internal model error"}), 500
+
+    publish_detection_event(image_bytes, detections, content_type)
 
     return jsonify({
         "fish_count": len(detections),

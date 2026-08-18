@@ -30,7 +30,7 @@ gcloud run deploy fish-id \
   --concurrency 5 \
   --max-instances 1 \
   --service-account "fish-id-cloud-run-sa@${PROJECT}.iam.gserviceaccount.com" \
-  --set-env-vars "CORS_ORIGIN=https://${PROJECT}.web.app" \
+  --set-env-vars "CORS_ORIGIN=https://${PROJECT}.web.app,GCP_PROJECT_ID=${PROJECT}" \
   --allow-unauthenticated \
   --project "$PROJECT"
 

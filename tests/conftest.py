@@ -55,3 +55,9 @@ def reset_rate_limiter():
     _limiter._buckets.clear()
     yield
     _limiter._buckets.clear()
+
+
+@pytest.fixture(autouse=True)
+def _disable_analytics_publish(monkeypatch):
+    """Defense in depth: no test should ever risk a real Pub/Sub call."""
+    monkeypatch.setattr(main, "publish_detection_event", lambda *a, **kw: None)

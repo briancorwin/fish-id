@@ -1,6 +1,6 @@
 data "google_project" "project" {}
 
-# Cloud Run service account — no IAM roles; the app makes no GCP API calls
+# Cloud Run service account — publishes analytics events to Pub/Sub (see pubsub.tf)
 resource "google_service_account" "cloud_run" {
   account_id   = "fish-id-cloud-run-sa"
   display_name = "fish-id Cloud Run SA"
@@ -54,7 +54,7 @@ resource "google_project_iam_member" "cicd_run_developer" {
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
-# Attach the Cloud Run SA when deploying
+# CI/CD SA — attach fish-id-cloud-run-sa when deploying (deploy-api.yml)
 resource "google_service_account_iam_member" "cicd_sa_user" {
   service_account_id = google_service_account.cloud_run.name
   role               = "roles/iam.serviceAccountUser"
@@ -127,8 +127,8 @@ resource "google_project_iam_member" "workflows_log_writer" {
   member  = "serviceAccount:${google_service_account.workflows.email}"
 }
 
-# CI/CD SA — attach the workflows SA as the pipeline's runtime service account when submitting a
-# run from train-pipeline.yml (aiplatform.PipelineJob.submit(service_account=...))
+# CI/CD SA — attach fish-id-workflows-sa as the pipeline's runtime service account when
+# submitting a run (train-pipeline.yml, aiplatform.PipelineJob.submit(service_account=...))
 resource "google_service_account_iam_member" "cicd_workflows_sa_user" {
   service_account_id = google_service_account.workflows.name
   role               = "roles/iam.serviceAccountUser"
@@ -152,4 +152,31 @@ resource "google_secret_manager_secret_iam_member" "workflows_deploy_token" {
   secret_id = google_secret_manager_secret.github_deploy_token.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.workflows.email}"
+}
+
+# Analytics consumer service account — receives Pub/Sub push, writes BigQuery + GCS
+resource "google_service_account" "analytics_consumer" {
+  account_id   = "fish-id-analytics-consumer-sa"
+  display_name = "fish-id Analytics Consumer SA"
+  depends_on   = [google_project_service.apis["iam.googleapis.com"]]
+}
+
+# Sufficient for insert_rows_json (tabledata.insertAll) — no bigquery.jobUser needed
+resource "google_bigquery_dataset_iam_member" "consumer_bq_writer" {
+  dataset_id = google_bigquery_dataset.analytics.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.analytics_consumer.email}"
+}
+
+resource "google_storage_bucket_iam_member" "consumer_images_writer" {
+  bucket = google_storage_bucket.review_images.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.analytics_consumer.email}"
+}
+
+# CI/CD SA — attach fish-id-analytics-consumer-sa when deploying (deploy-analytics-consumer.yml)
+resource "google_service_account_iam_member" "cicd_sa_user_analytics_consumer" {
+  service_account_id = google_service_account.analytics_consumer.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.cicd.email}"
 }

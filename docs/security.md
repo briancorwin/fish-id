@@ -91,7 +91,7 @@ Per-IP token bucket (`app/rate_limiter.py`): 5 requests/minute per IP, burst of 
 | Role | Scope |
 |---|---|
 | `roles/bigquery.dataEditor` | `fish_id_analytics` dataset only |
-| `roles/storage.objectAdmin` | Analytics images bucket only |
+| `roles/storage.objectAdmin` | Review images bucket only |
 
 ### Authenticated Pub/Sub Push
 

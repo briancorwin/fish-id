@@ -11,6 +11,8 @@ locals {
     "firebasehosting.googleapis.com",
     "aiplatform.googleapis.com",
     "secretmanager.googleapis.com",
+    "pubsub.googleapis.com",
+    "bigquery.googleapis.com",
   ])
 }
 

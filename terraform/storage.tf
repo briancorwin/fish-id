@@ -36,6 +36,22 @@ resource "google_storage_bucket_iam_member" "cicd_model_reader" {
   member = "serviceAccount:${google_service_account.cicd.email}"
 }
 
+# Low-confidence detection images, keyed by SHA-256 hash of the uploaded bytes
+# (dedup: same bytes overwrite the same object key, so re-uploads are free).
+# 90-day retention bounds storage cost while leaving enough time to review/retrain.
+resource "google_storage_bucket" "review_images" {
+  name                        = "${var.project_id}-fish-id-review-images"
+  location                    = var.region
+  uniform_bucket_level_access = true
+
+  lifecycle_rule {
+    condition { age = 90 }
+    action    { type = "Delete" }
+  }
+
+  depends_on = [google_project_service.apis["storage.googleapis.com"]]
+}
+
 # Training data bucket — flat pool of images and labels, versioned so each sync is recoverable
 resource "google_storage_bucket" "training" {
   name                        = "${var.project_id}-fish-id-training"

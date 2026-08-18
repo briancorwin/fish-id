@@ -22,6 +22,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             app/requirements.txt
+            analytics-consumer/requirements.txt
             training/requirements.txt
             pipeline/requirements.txt
             scripts/requirements.txt
@@ -30,6 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r app/requirements.txt
+          pip install -r analytics-consumer/requirements.txt
           pip install -r training/requirements.txt
           pip install -r pipeline/requirements.txt
           pip install -r scripts/requirements.txt
@@ -40,10 +42,15 @@ jobs:
         run: pytest tests/ -v
 
       - name: Run pylint
-        run: pylint app/ training/ pipeline/ scripts/ tests/ --fail-under=7.0
+        run: pylint app/ analytics-consumer/ training/ pipeline/ scripts/ tests/ --fail-under=7.0
 
       - name: Run mypy
-        run: mypy app/ training/ pipeline/ scripts/ tests/ --ignore-missing-imports
+        # analytics-consumer/main.py and app/main.py share a filename — mypy treats
+        # same-named modules across separate run targets as a "duplicate module"
+        # error, so they're checked in two invocations.
+        run: |
+          mypy app/ training/ pipeline/ scripts/ tests/ --ignore-missing-imports
+          mypy analytics-consumer/ --ignore-missing-imports
 
   dependency-scan:
     name: Dependency Scan
@@ -59,13 +66,17 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: app/requirements.txt
+          cache-dependency-path: |
+            app/requirements.txt
+            analytics-consumer/requirements.txt
 
       - name: Install security tools
         run: pip install pip-audit
 
       - name: Audit dependencies for known CVEs
-        run: pip-audit -r app/requirements.txt
+        run: |
+          pip-audit -r app/requirements.txt
+          pip-audit -r analytics-consumer/requirements.txt
 
   secret-scan:
     name: Secret Scan
