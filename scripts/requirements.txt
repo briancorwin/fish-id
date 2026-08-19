@@ -1,4 +1,4 @@
 google-cloud-storage==3.13.1
-google-cloud-aiplatform==1.163.0
+google-cloud-aiplatform==1.164.0
 roboflow==1.4.0
 PyYAML==6.0.3
